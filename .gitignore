@@ -1,7 +1,7 @@
 # Node.js
 node_modules/
 frontend/node_modules/
-frontend/dist/
+# frontend/dist/
 
 # Python virtual environment and cache
 backend/venv/
