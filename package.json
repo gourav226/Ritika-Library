@@ -1,0 +1,12 @@
+{
+  "name": "ritika-library-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Full Stack Library System with Face ID Attendance and Book Management",
+  "scripts": {
+    "start": "start.bat"
+  },
+  "workspaces": [
+    "frontend"
+  ]
+}
