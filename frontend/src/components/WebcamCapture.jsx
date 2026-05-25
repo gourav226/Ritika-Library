@@ -33,7 +33,7 @@ const WebcamCapture = ({
         }
 
         // We load models from the local public directory
-        const MODEL_URL = '/models/';
+        const MODEL_URL = `${import.meta.env.BASE_URL}models/`;
         console.log('FaceID: Loading models from local path:', MODEL_URL);
         setScanStatus('Loading Face AI models...');
         
