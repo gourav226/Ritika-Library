@@ -23,12 +23,25 @@ import {
 } from 'lucide-react';
 import WebcamCapture from './components/WebcamCapture';
 import bookContents from './data/bookContent';
+import { DEFAULT_BOOKS, DEFAULT_USERS, DEFAULT_ATTENDANCE } from './data/defaultDbData';
 
 const API_BASE = 'http://127.0.0.1:5000/api';
+
+const euclideanDistance = (desc1, desc2) => {
+  if (!desc1 || !desc2 || desc1.length !== desc2.length) return 999.0;
+  let sum = 0;
+  for (let i = 0; i < desc1.length; i++) {
+    sum += Math.pow(Number(desc1[i]) - Number(desc2[i]), 2);
+  }
+  return Math.sqrt(sum);
+};
 
 function App() {
   // Navigation: 'home' (curated catalog), 'attendance' (scanner portal), 'dashboard' (profile + auth)
   const [currentView, setCurrentView] = useState('home');
+  
+  // Fallback state if Flask API is unreachable
+  const [isUsingMockDb, setIsUsingMockDb] = useState(false);
   
   // App States
   const [books, setBooks] = useState([]);
@@ -122,9 +135,20 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setBooks(data);
+        setIsUsingMockDb(false);
+      } else {
+        throw new Error("Server returned non-ok status");
       }
     } catch (err) {
-      console.error('Error fetching books:', err);
+      console.warn('Error fetching books from backend, falling back to LocalStorage:', err);
+      setIsUsingMockDb(true);
+      const localBooks = localStorage.getItem('ritika_library_books');
+      if (localBooks) {
+        setBooks(JSON.parse(localBooks));
+      } else {
+        localStorage.setItem('ritika_library_books', JSON.stringify(DEFAULT_BOOKS));
+        setBooks(DEFAULT_BOOKS);
+      }
     }
   };
 
@@ -134,9 +158,18 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setAttendanceLogs(data);
+      } else {
+        throw new Error("Server returned non-ok status");
       }
     } catch (err) {
-      console.error('Error fetching logs:', err);
+      console.warn('Error fetching logs from backend, falling back to LocalStorage:', err);
+      const localLogs = localStorage.getItem('ritika_library_attendance');
+      if (localLogs) {
+        setAttendanceLogs([...JSON.parse(localLogs)].reverse());
+      } else {
+        localStorage.setItem('ritika_library_attendance', JSON.stringify(DEFAULT_ATTENDANCE));
+        setAttendanceLogs([...DEFAULT_ATTENDANCE].reverse());
+      }
     }
   };
 
@@ -146,9 +179,29 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setRegisteredUsers(data);
+      } else {
+        throw new Error("Server returned non-ok status");
       }
     } catch (err) {
-      console.error('Error fetching users:', err);
+      console.warn('Error fetching users from backend, falling back to LocalStorage:', err);
+      const localUsers = localStorage.getItem('ritika_library_users');
+      if (localUsers) {
+        const parsed = JSON.parse(localUsers);
+        const lightUsers = parsed.map(u => ({
+          studentId: u.studentId,
+          name: u.name,
+          registeredAt: u.registeredAt
+        }));
+        setRegisteredUsers(lightUsers);
+      } else {
+        localStorage.setItem('ritika_library_users', JSON.stringify(DEFAULT_USERS));
+        const lightUsers = DEFAULT_USERS.map(u => ({
+          studentId: u.studentId,
+          name: u.name,
+          registeredAt: u.registeredAt
+        }));
+        setRegisteredUsers(lightUsers);
+      }
     }
   };
 
@@ -158,9 +211,41 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setUserProfile(data);
+      } else {
+        throw new Error("Server returned non-ok status");
       }
     } catch (err) {
-      console.error('Error fetching profile:', err);
+      console.warn('Error fetching profile from backend, falling back to LocalStorage:', err);
+      const localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+      const user = localUsers.find(u => u.studentId.toLowerCase() === studentId.toLowerCase());
+      if (user) {
+        const localBooks = JSON.parse(localStorage.getItem('ritika_library_books') || JSON.stringify(DEFAULT_BOOKS));
+        const issuedBooks = localBooks.filter(b => b.issuedTo === user.studentId).map(b => ({
+          id: b.id,
+          title: b.title,
+          author: b.author,
+          genre: b.genre,
+          dueDate: b.dueDate
+        }));
+
+        const localOrders = JSON.parse(localStorage.getItem('ritika_library_orders') || '[]');
+        const requestedBooks = localOrders.filter(o => o.requestedBy === user.name || o.requestedBy === studentId);
+
+        const localAttendance = JSON.parse(localStorage.getItem('ritika_library_attendance') || JSON.stringify(DEFAULT_ATTENDANCE));
+        const userAttendance = localAttendance.filter(a => a.studentId === user.studentId).reverse(); // newest first
+
+        setUserProfile({
+          studentId: user.studentId,
+          name: user.name,
+          registeredAt: user.registeredAt,
+          issuedBooksCount: issuedBooks.length,
+          issuedBooks,
+          requestedBooks,
+          attendanceHistory: userAttendance
+        });
+      } else {
+        setUserProfile(null);
+      }
     }
   };
 
@@ -197,9 +282,52 @@ function App() {
         }, 3000);
       }
     } catch (err) {
-      console.error(err);
-      addToast('Failed to connect to backend server', 'error');
-      setIsProcessingAutoAttendance(false);
+      // Local fallback
+      const localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+      let matchedUser = null;
+      let minDistance = 999.0;
+      const threshold = 0.60;
+
+      for (const user of localUsers) {
+        const dist = euclideanDistance(descriptor, user.faceDescriptor);
+        if (dist < minDistance) {
+          minDistance = dist;
+          matchedUser = user;
+        }
+      }
+
+      if (minDistance > threshold || !matchedUser) {
+        addToast('Face not recognized. Please register first or adjust lighting.', 'error');
+        setTimeout(() => {
+          setIsProcessingAutoAttendance(false);
+        }, 3000);
+      } else {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const nowTimeStr = new Date().toTimeString().split(' ')[0];
+
+        let localAttendance = JSON.parse(localStorage.getItem('ritika_library_attendance') || JSON.stringify(DEFAULT_ATTENDANCE));
+        const alreadyMarked = localAttendance.some(
+          log => log.studentId === matchedUser.studentId && log.date === todayStr
+        );
+
+        if (alreadyMarked) {
+          addToast(`${matchedUser.name} (${matchedUser.studentId}) - Attendance already logged for today!`, 'info');
+        } else {
+          const newLog = {
+            studentId: matchedUser.studentId,
+            name: matchedUser.name,
+            date: todayStr,
+            time: nowTimeStr,
+            method: 'Auto-Scan'
+          };
+          localStorage.setItem('ritika_library_attendance', JSON.stringify([...localAttendance, newLog]));
+          addToast(`Welcome ${matchedUser.name}! Attendance logged locally at ${nowTimeStr}`, 'success');
+          fetchLogs();
+        }
+        setTimeout(() => {
+          setIsProcessingAutoAttendance(false);
+        }, 5000);
+      }
     }
   };
 
@@ -253,8 +381,49 @@ function App() {
         addToast(data.error || 'Face verification failed', 'error');
       }
     } catch (err) {
-      addToast('Error contacting backend server', 'error');
-      console.error(err);
+      // Local fallback
+      const localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+      const targetUser = localUsers.find(u => u.studentId.toLowerCase() === selectedSearchUser.studentId.toLowerCase());
+      
+      if (!targetUser) {
+        addToast('Student not found in local database', 'error');
+        setIsProcessingSearchAttendance(false);
+        return;
+      }
+
+      const dist = euclideanDistance(descriptor, targetUser.faceDescriptor);
+      const threshold = 0.60;
+
+      if (dist < threshold) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const nowTimeStr = new Date().toTimeString().split(' ')[0];
+
+        let localAttendance = JSON.parse(localStorage.getItem('ritika_library_attendance') || JSON.stringify(DEFAULT_ATTENDANCE));
+        const alreadyMarked = localAttendance.some(
+          log => log.studentId === targetUser.studentId && log.date === todayStr
+        );
+
+        if (alreadyMarked) {
+          addToast(`Attendance already logged today for ${targetUser.name}!`, 'info');
+        } else {
+          const newLog = {
+            studentId: targetUser.studentId,
+            name: targetUser.name,
+            date: todayStr,
+            time: nowTimeStr,
+            method: 'Face Verify'
+          };
+          localStorage.setItem('ritika_library_attendance', JSON.stringify([...localAttendance, newLog]));
+          addToast(`Verified! Attendance logged locally for ${targetUser.name}`, 'success');
+          fetchLogs();
+        }
+
+        setSearchName('');
+        setSelectedSearchUser(null);
+        setIsVerifyingSearchFace(false);
+      } else {
+        addToast('Face verification failed. Face does not match the record.', 'error');
+      }
     } finally {
       setIsProcessingSearchAttendance(false);
     }
@@ -291,8 +460,17 @@ function App() {
         addToast('Student ID not found. Please register under "Register Face ID" first.', 'error');
       }
     } catch (err) {
-      addToast('Error communicating with server', 'error');
-      console.error(err);
+      // Local fallback
+      const localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+      const user = localUsers.find(u => u.studentId.toLowerCase() === studentId.trim().toLowerCase());
+      if (user) {
+        setLoggedInUser({ studentId: user.studentId, name: user.name });
+        addToast(`Access Granted. Welcome back, ${user.name}!`, 'success');
+        setLoginIdInput('');
+        setLoginSearchResults([]);
+      } else {
+        addToast('Student ID not found in local database. Please register first.', 'error');
+      }
     }
   };
 
@@ -342,8 +520,39 @@ function App() {
         addToast(data.error || 'Registration failed', 'error');
       }
     } catch (err) {
-      addToast('Error connecting to backend server', 'error');
-      console.error(err);
+      // Local fallback
+      let localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+      const existingUserIdx = localUsers.findIndex(u => u.studentId.toLowerCase() === regId.trim().toLowerCase());
+      
+      const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+      if (existingUserIdx !== -1) {
+        localUsers[existingUserIdx].name = regName.trim();
+        localUsers[existingUserIdx].faceDescriptor = regFaceDescriptor;
+        localUsers[existingUserIdx].registeredAt = timestamp;
+        addToast('Face ID updated successfully in local database!', 'success');
+      } else {
+        const newUser = {
+          studentId: regId.trim(),
+          name: regName.trim(),
+          faceDescriptor: regFaceDescriptor,
+          registeredAt: timestamp
+        };
+        localUsers.push(newUser);
+        addToast('Student registered with Face ID successfully in local database!', 'success');
+      }
+
+      localStorage.setItem('ritika_library_users', JSON.stringify(localUsers));
+      fetchUsers();
+
+      // Auto Log In
+      setLoggedInUser({ studentId: regId.trim(), name: regName.trim() });
+      addToast(`Welcome to your dashboard, ${regName}!`, 'success');
+
+      // Reset fields
+      setRegName('');
+      setRegId('');
+      setRegFaceDescriptor(null);
     } finally {
       setIsRegistering(false);
     }
@@ -383,8 +592,27 @@ function App() {
         addToast(data.error || 'Failed to submit request', 'error');
       }
     } catch (err) {
-      addToast('Error connecting to backend', 'error');
-      console.error(err);
+      // Local fallback
+      let localOrders = JSON.parse(localStorage.getItem('ritika_library_orders') || '[]');
+      const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const newOrder = {
+        id: localOrders.length + 1,
+        title: orderTitle.trim(),
+        author: orderAuthor.trim(),
+        requestedBy: requester,
+        reason: orderReason.trim(),
+        status: 'Pending',
+        date: timestamp
+      };
+      localOrders.push(newOrder);
+      localStorage.setItem('ritika_library_orders', JSON.stringify(localOrders));
+
+      addToast('Book request submitted locally for review!', 'success');
+      setOrderTitle('');
+      setOrderAuthor('');
+      setOrderReason('');
+      setIsOrderModalOpen(false);
+      if (loggedInUser) fetchUserProfile(loggedInUser.studentId);
     }
   };
 
@@ -427,7 +655,31 @@ function App() {
           addToast(data.error || 'Failed to issue book', 'error');
         }
       } catch (err) {
-        addToast('Network error during checkout', 'error');
+        // Local fallback
+        let localBooks = JSON.parse(localStorage.getItem('ritika_library_books') || JSON.stringify(DEFAULT_BOOKS));
+        const bookIdx = localBooks.findIndex(b => b.id === book.id);
+        if (bookIdx !== -1) {
+          if (!localBooks[bookIdx].available) {
+            addToast(`Book is already issued to ${localBooks[bookIdx].issuedName || 'someone else'}`, 'error');
+            setIsProcessingIssue(false);
+            setIssuingBook(null);
+            return;
+          }
+
+          const today = new Date();
+          today.setDate(today.getDate() + 14);
+          const dueDateStr = today.toISOString().split('T')[0];
+
+          localBooks[bookIdx].available = false;
+          localBooks[bookIdx].issuedTo = loggedInUser.studentId;
+          localBooks[bookIdx].issuedName = loggedInUser.name;
+          localBooks[bookIdx].dueDate = dueDateStr;
+
+          localStorage.setItem('ritika_library_books', JSON.stringify(localBooks));
+          addToast(`Success! "${book.title}" issued to your account locally`, 'success');
+          fetchBooks();
+          fetchUserProfile(loggedInUser.studentId);
+        }
       } finally {
         setIsProcessingIssue(false);
         setIssuingBook(null);
@@ -483,8 +735,43 @@ function App() {
         addToast(data.error || 'Failed to issue book', 'error');
       }
     } catch (err) {
-      addToast('Network error during checkout', 'error');
-      console.error(err);
+      // Local fallback
+      let finalName = targetStudentName;
+      const localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+      const user = localUsers.find(u => u.studentId.toLowerCase() === targetStudentId.toLowerCase());
+      
+      if (!user) {
+        addToast('Student ID not found in local database. Please register first.', 'error');
+        setIsProcessingIssue(false);
+        return;
+      }
+      finalName = user.name;
+
+      let localBooks = JSON.parse(localStorage.getItem('ritika_library_books') || JSON.stringify(DEFAULT_BOOKS));
+      const bookIdx = localBooks.findIndex(b => b.id === issuingBook.id);
+
+      if (bookIdx !== -1) {
+        if (!localBooks[bookIdx].available) {
+          addToast(`Book is already issued to ${localBooks[bookIdx].issuedName || 'someone else'}`, 'error');
+          setIsProcessingIssue(false);
+          return;
+        }
+
+        const today = new Date();
+        today.setDate(today.getDate() + 14);
+        const dueDateStr = today.toISOString().split('T')[0];
+
+        localBooks[bookIdx].available = false;
+        localBooks[bookIdx].issuedTo = user.studentId;
+        localBooks[bookIdx].issuedName = finalName;
+        localBooks[bookIdx].dueDate = dueDateStr;
+
+        localStorage.setItem('ritika_library_books', JSON.stringify(localBooks));
+        addToast(`Success! "${issuingBook.title}" issued to ${finalName} locally`, 'success');
+        fetchBooks();
+        setIsIssueModalOpen(false);
+        setIssuingBook(null);
+      }
     } finally {
       setIsProcessingIssue(false);
     }
@@ -508,8 +795,25 @@ function App() {
         addToast(data.error || 'Failed to return book', 'error');
       }
     } catch (err) {
-      addToast('Error returning book', 'error');
-      console.error(err);
+      // Local fallback
+      let localBooks = JSON.parse(localStorage.getItem('ritika_library_books') || JSON.stringify(DEFAULT_BOOKS));
+      const bookIdx = localBooks.findIndex(b => b.id === bookId);
+      if (bookIdx !== -1) {
+        if (localBooks[bookIdx].available) {
+          addToast('Book is already available in the library', 'error');
+          return;
+        }
+
+        localBooks[bookIdx].available = true;
+        localBooks[bookIdx].issuedTo = null;
+        localBooks[bookIdx].issuedName = null;
+        localBooks[bookIdx].dueDate = null;
+
+        localStorage.setItem('ritika_library_books', JSON.stringify(localBooks));
+        addToast('Book returned to library shelves locally!', 'success');
+        fetchBooks();
+        if (loggedInUser) fetchUserProfile(loggedInUser.studentId);
+      }
     }
   };
 
@@ -1341,6 +1645,21 @@ function App() {
 
       {/* Footer */}
       <footer style={{ marginTop: 'auto', borderTop: '1px solid var(--border-color)', padding: '16px 24px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
+        {isUsingMockDb && (
+          <div style={{
+            display: 'inline-block',
+            margin: '0 auto 12px auto',
+            background: 'rgba(14, 165, 233, 0.15)',
+            border: '1px solid rgba(14, 165, 233, 0.3)',
+            color: 'var(--secondary)',
+            padding: '6px 12px',
+            borderRadius: '20px',
+            fontSize: '11px',
+            fontWeight: '600'
+          }}>
+            🔌 Running in Client-Side Offline Database Mode (Data saved to your browser)
+          </div>
+        )}
         <p>© 2026 Ritika Library Portal. Smart face-recognition features local via face-api.js.</p>
       </footer>
     </div>
