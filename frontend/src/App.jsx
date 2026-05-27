@@ -122,7 +122,12 @@ function App() {
   // Toast helper
   const addToast = (message, type = 'success') => {
     const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts(prev => {
+      if (prev.some(t => t.message === message && t.type === type)) {
+        return prev;
+      }
+      return [...prev, { id, message, type }];
+    });
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4000);
@@ -476,8 +481,10 @@ function App() {
 
   // 4. Register face and student (Auto-logs in on success)
   const handleRegisterFace = async (descriptor) => {
+    if (!regFaceDescriptor) {
+      addToast('Face ID features extracted successfully! Click submit below.', 'success');
+    }
     setRegFaceDescriptor(descriptor);
-    addToast('Face ID features extracted successfully! Click submit below.', 'success');
   };
 
   const handleRegisterSubmit = async (e) => {
@@ -841,13 +848,20 @@ function App() {
       {/* Toast Notifications */}
       <div className="toast-container">
         {toasts.map(t => (
-          <div key={t.id} className={`toast toast-${t.type} glass-panel`}>
+          <div 
+            key={t.id} 
+            className={`toast toast-${t.type} glass-panel`}
+            onClick={() => setToasts(prev => prev.filter(item => item.id !== t.id))}
+            style={{ cursor: 'pointer' }}
+            title="Click to dismiss"
+          >
             <div className="toast-icon">
               {t.type === 'success' && <CheckCircle2 size={16} />}
               {t.type === 'error' && <AlertTriangle size={16} />}
               {t.type === 'info' && <Info size={16} />}
             </div>
-            <div>{t.message}</div>
+            <div style={{ flex: 1 }}>{t.message}</div>
+            <div style={{ opacity: 0.6, fontSize: '12px', fontWeight: 'bold', marginLeft: '12px', userSelect: 'none' }}>×</div>
           </div>
         ))}
       </div>

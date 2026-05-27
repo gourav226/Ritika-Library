@@ -952,12 +952,13 @@ button, input, textarea, select {
 /* Toast styling */
 .toast-container {
   position: fixed;
-  bottom: 20px;
+  top: 80px;
   right: 20px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   z-index: 10000;
+  max-width: 320px;
 }
 
 .toast {
@@ -1324,5 +1325,163 @@ button, input, textarea, select {
 }
 .reader-theme-dark .book-reader-title-line {
   color: #94a3b8;
+}
+
+/* ==================== RESPONSIVE DESIGN & MOBILE OPTIMIZATIONS ==================== */
+@media (max-width: 900px) {
+  .attendance-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  .register-card-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .portal-auth-container {
+    grid-template-columns: 1fr;
+    gap: 20px;
+    padding: 0 12px;
+  }
+  .main-content {
+    padding: 16px 12px;
+  }
+  .profile-container {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Header & Navigation */
+  .nav-container {
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px;
+    align-items: center;
+  }
+  .nav-links {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .nav-btn {
+    padding: 6px 12px;
+    font-size: 13px;
+    gap: 6px;
+  }
+  .user-badge {
+    margin-top: 4px;
+    font-size: 12px;
+    padding: 5px 12px;
+  }
+
+  /* Toast notification centered on mobile */
+  .toast-container {
+    top: 74px;
+    right: 12px;
+    left: 12px;
+    max-width: none;
+  }
+  .toast {
+    min-width: 0;
+    width: 100%;
+    padding: 10px 16px;
+  }
+
+  /* Homepage & Hero */
+  .homepage-hero {
+    padding: 24px 16px;
+    margin-bottom: 20px;
+    border-radius: 12px;
+  }
+  .homepage-hero h1 {
+    font-size: 26px;
+  }
+  .homepage-hero p {
+    font-size: 13px;
+  }
+
+  /* Books Grid (2 Columns on mobile!) */
+  .books-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  .book-card {
+    padding: 12px;
+    border-radius: 12px;
+  }
+  .book-cover-mock {
+    padding: 10px;
+    border-radius: 8px;
+  }
+  .book-cover-title {
+    font-size: 12px;
+  }
+  .book-cover-author {
+    font-size: 9px;
+  }
+  .book-title {
+    font-size: 13px;
+    margin-bottom: 2px;
+  }
+  .book-author {
+    font-size: 11px;
+    margin-bottom: 4px;
+  }
+  .book-meta {
+    font-size: 10px;
+  }
+  .category-title-row h2 {
+    font-size: 18px;
+  }
+  .category-pill {
+    padding: 6px 14px;
+    font-size: 12px;
+  }
+
+  /* Camera Container optimization */
+  .camera-container, .auth-scanner-box {
+    max-height: 260px;
+  }
+  .camera-placeholder p {
+    font-size: 12px;
+  }
+
+  /* Stats Grid */
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .stat-item {
+    padding: 10px;
+    border-radius: 8px;
+  }
+  .stat-value {
+    font-size: 18px;
+  }
+  .stat-label {
+    font-size: 9px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Very small screens */
+  .brand-text {
+    font-size: 18px;
+  }
+  .brand-icon {
+    width: 32px;
+    height: 32px;
+  }
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .toast-container {
+    top: 110px; /* Adjust since header wraps more */
+  }
 }
 
