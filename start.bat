@@ -1,7 +1,7 @@
 @echo off
-title Ritika Library & Face ID Attendance System
+title Library & Face ID Attendance System
 echo ==============================================================
-echo        Ritika Library ^& Face ID Attendance System
+echo        Library ^& Face ID Attendance System
 echo ==============================================================
 echo.
 
@@ -15,7 +15,7 @@ if not exist "backend\venv\Scripts\python.exe" (
 
 :: Start Flask Backend in a new CMD window
 echo [INFO] Starting Python Flask Backend on port 5000...
-start "Ritika Library Backend" cmd /k "cd backend && venv\Scripts\python app.py"
+start "Library Backend" cmd /k "cd backend && venv\Scripts\python app.py"
 
 :: Check if frontend node_modules exists
 if not exist "frontend\node_modules\" (
@@ -25,13 +25,13 @@ if not exist "frontend\node_modules\" (
 
 :: Start Vite Frontend in a new CMD window
 echo [INFO] Starting React Vite Frontend on port 5173...
-start "Ritika Library Frontend" cmd /k "cd frontend && npm run dev"
+start "Library Frontend" cmd /k "cd frontend && npm run dev"
 
 echo.
 echo ==============================================================
 echo  Both services are starting!
 echo  - Backend API: http://127.0.0.1:5000
-echo  - Frontend Web UI: http://localhost:5173
+echo  - Frontend Web UI: http://localhost:5173/Ritika-Library/
 echo.
 echo  Keep the terminal windows open while using the application.
 echo ==============================================================

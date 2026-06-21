@@ -396,6 +396,114 @@ def login_user():
         "name": matched_user['name']
     })
 
+# ==================== ADMIN PORTAL APIS ====================
+
+@app.route('/api/admin/orders', methods=['GET'])
+def get_all_orders():
+    db = load_db()
+    return jsonify(db.get('orders', []))
+
+@app.route('/api/admin/orders/<int:order_id>/status', methods=['POST'])
+def update_order_status(order_id):
+    data = request.json
+    status = data.get('status') # 'Approved' or 'Rejected'
+    
+    if status not in ['Approved', 'Rejected']:
+        return jsonify({"error": "Invalid status (must be Approved or Rejected)"}), 400
+        
+    db = load_db()
+    orders = db.get('orders', [])
+    books = db.get('books', [])
+    
+    order_found = None
+    for o in orders:
+        if o['id'] == order_id:
+            order_found = o
+            break
+            
+    if not order_found:
+        return jsonify({"error": "Order not found"}), 404
+        
+    order_found['status'] = status
+    
+    # If approved, add the book to the library
+    if status == 'Approved':
+        new_id = max([b['id'] for b in books]) + 1 if books else 1
+        new_book = {
+            "id": new_id,
+            "title": order_found['title'],
+            "author": order_found['author'],
+            "genre": "Programming & Tech", # Default genre
+            "available": True,
+            "issuedTo": None,
+            "issuedName": None,
+            "dueDate": None
+        }
+        books.append(new_book)
+        db['books'] = books
+        
+    save_db(db)
+    return jsonify({"success": True, "message": f"Order status updated to {status}", "order": order_found})
+
+@app.route('/api/admin/books', methods=['POST'])
+def admin_add_book():
+    data = request.json
+    title = data.get('title')
+    author = data.get('author')
+    genre = data.get('genre', 'Programming & Tech')
+    
+    if not title or not author:
+        return jsonify({"error": "Missing title or author"}), 400
+        
+    db = load_db()
+    books = db.get('books', [])
+    
+    new_id = max([b['id'] for b in books]) + 1 if books else 1
+    new_book = {
+        "id": new_id,
+        "title": title,
+        "author": author,
+        "genre": genre,
+        "available": True,
+        "issuedTo": None,
+        "issuedName": None,
+        "dueDate": None
+    }
+    books.append(new_book)
+    db['books'] = books
+    save_db(db)
+    
+    return jsonify({"success": True, "message": "Book added successfully", "book": new_book})
+
+@app.route('/api/admin/users/<student_id>', methods=['DELETE'])
+def admin_delete_user(student_id):
+    db = load_db()
+    users = db.get('users', [])
+    books = db.get('books', [])
+    
+    user_found = False
+    new_users = []
+    for u in users:
+        if u['studentId'] == student_id:
+            user_found = True
+        else:
+            new_users.append(u)
+            
+    if not user_found:
+        return jsonify({"error": "Student not found"}), 404
+        
+    # Free any books issued to this student
+    for book in books:
+        if book.get('issuedTo') == student_id:
+            book['available'] = True
+            book['issuedTo'] = None
+            book['issuedName'] = None
+            book['dueDate'] = None
+            
+    db['users'] = new_users
+    save_db(db)
+    return jsonify({"success": True, "message": "Student deregistered successfully"})
+
 if __name__ == '__main__':
     # Start on port 5000
     app.run(host='127.0.0.1', port=5000, debug=True)

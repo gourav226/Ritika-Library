@@ -43,6 +43,20 @@ function App() {
   // Fallback state if Flask API is unreachable
   const [isUsingMockDb, setIsUsingMockDb] = useState(false);
   
+  // Library Portal Auth States
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userRole, setUserRole] = useState('guest'); // 'guest' | 'student' | 'admin'
+  const [authTab, setAuthTab] = useState('student'); // 'student' | 'admin'
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminActiveTab, setAdminActiveTab] = useState('overview'); // 'overview' | 'suggestions' | 'students' | 'issues' | 'logs' | 'add-book'
+  const [allOrders, setAllOrders] = useState([]);
+  const [isProcessingFaceLogin, setIsProcessingFaceLogin] = useState(false);
+
+  // Add Book Admin states
+  const [newBookTitle, setNewBookTitle] = useState('');
+  const [newBookAuthor, setNewBookAuthor] = useState('');
+  const [newBookGenre, setNewBookGenre] = useState('Programming & Tech');
+
   // App States
   const [books, setBooks] = useState([]);
   const [attendanceLogs, setAttendanceLogs] = useState([]);
@@ -50,7 +64,7 @@ function App() {
   const [stats, setStats] = useState({ totalBooks: 0, activeStudents: 0, logsToday: 0 });
   
   // Dashboard states
-  const [loggedInUser, setLoggedInUser] = useState(null); // { studentId, name }
+  const [loggedInUser, setLoggedInUser] = useState(null); // { studentId, name } or admin
   const [userProfile, setUserProfile] = useState(null); // profile data from API
   const [activeReadingBook, setActiveReadingBook] = useState(null); // book being read in modal
   
@@ -84,6 +98,11 @@ function App() {
   const [issueSearchResults, setIssueSearchResults] = useState([]);
   const [isProcessingIssue, setIsProcessingIssue] = useState(false);
 
+  // Selected student in Admin Directory details modal
+  const [selectedAdminStudent, setSelectedAdminStudent] = useState(null);
+  const [adminStudentProfile, setAdminStudentProfile] = useState(null);
+  const [isLoadingAdminProfile, setIsLoadingAdminProfile] = useState(false);
+
   // Global Toasts State
   const [toasts, setToasts] = useState([]);
 
@@ -96,6 +115,7 @@ function App() {
     fetchBooks();
     fetchLogs();
     fetchUsers();
+    fetchOrders();
   }, []);
 
   // Update stats whenever books/logs/users change
@@ -112,12 +132,12 @@ function App() {
 
   // Fetch user profile when loggedInUser changes
   useEffect(() => {
-    if (loggedInUser) {
+    if (loggedInUser && userRole === 'student') {
       fetchUserProfile(loggedInUser.studentId);
     } else {
       setUserProfile(null);
     }
-  }, [loggedInUser]);
+  }, [loggedInUser, userRole]);
 
   // Toast helper
   const addToast = (message, type = 'success') => {
@@ -206,6 +226,26 @@ function App() {
           registeredAt: u.registeredAt
         }));
         setRegisteredUsers(lightUsers);
+      }
+    }
+  };
+
+  const fetchOrders = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/orders`);
+      if (res.ok) {
+        const data = await res.json();
+        setAllOrders(data);
+      } else {
+        throw new Error("Server returned non-ok status");
+      }
+    } catch (err) {
+      console.warn('Error fetching orders from backend, falling back to LocalStorage:', err);
+      const localOrders = localStorage.getItem('ritika_library_orders');
+      if (localOrders) {
+        setAllOrders(JSON.parse(localOrders));
+      } else {
+        setAllOrders([]);
       }
     }
   };
@@ -447,7 +487,7 @@ function App() {
     setLoginSearchResults(filtered.slice(0, 5));
   }, [loginIdInput, registeredUsers]);
 
-  const handleTextLoginSubmit = async (studentId) => {
+  const handleStudentTextLogin = async (studentId) => {
     if (!studentId.trim()) {
       addToast('Please enter your Student ID', 'error');
       return;
@@ -458,6 +498,9 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         setLoggedInUser({ studentId: data.studentId, name: data.name });
+        setUserRole('student');
+        setIsLoggedIn(true);
+        setCurrentView('home');
         addToast(`Access Granted. Welcome back, ${data.name}!`, 'success');
         setLoginIdInput('');
         setLoginSearchResults([]);
@@ -470,12 +513,342 @@ function App() {
       const user = localUsers.find(u => u.studentId.toLowerCase() === studentId.trim().toLowerCase());
       if (user) {
         setLoggedInUser({ studentId: user.studentId, name: user.name });
-        addToast(`Access Granted. Welcome back, ${user.name}!`, 'success');
+        setUserRole('student');
+        setIsLoggedIn(true);
+        setCurrentView('home');
+        addToast(`Access Granted. Welcome back, ${user.name}! (Offline Mode)`, 'success');
         setLoginIdInput('');
         setLoginSearchResults([]);
       } else {
         addToast('Student ID not found in local database. Please register first.', 'error');
       }
+    }
+  };
+
+  const handleStudentFaceLogin = async (descriptor) => {
+    if (isProcessingFaceLogin) return;
+    setIsProcessingFaceLogin(true);
+
+    try {
+      const res = await fetch(`${API_BASE}/users/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ faceDescriptor: descriptor })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setLoggedInUser({ studentId: data.studentId, name: data.name });
+        setUserRole('student');
+        setIsLoggedIn(true);
+        setCurrentView('home');
+        addToast(`Access Granted. Welcome back, ${data.name}!`, 'success');
+      } else {
+        addToast(data.error || 'Face not recognized. Access Denied.', 'error');
+      }
+    } catch (err) {
+      // Local fallback
+      const localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+      let matchedUser = null;
+      let minDistance = 999.0;
+      const threshold = 0.60;
+
+      for (const user of localUsers) {
+        const dist = euclideanDistance(descriptor, user.faceDescriptor);
+        if (dist < minDistance) {
+          minDistance = dist;
+          matchedUser = user;
+        }
+      }
+
+      if (minDistance < threshold && matchedUser) {
+        setLoggedInUser({ studentId: matchedUser.studentId, name: matchedUser.name });
+        setUserRole('student');
+        setIsLoggedIn(true);
+        setCurrentView('home');
+        addToast(`Access Granted. Welcome back, ${matchedUser.name}! (Offline Mode)`, 'success');
+      } else {
+        addToast('Face not recognized. Please register first or adjust lighting.', 'error');
+      }
+    } finally {
+      setIsProcessingFaceLogin(false);
+    }
+  };
+
+  const handleUnifiedFaceScan = async (descriptor) => {
+    const rollId = loginIdInput.trim();
+    if (!rollId) return;
+
+    const isRegistered = registeredUsers.some(u => u.studentId.toLowerCase() === rollId.toLowerCase());
+
+    if (isRegistered) {
+      // Returning student: auto login using face descriptor
+      if (isProcessingFaceLogin) return;
+      setIsProcessingFaceLogin(true);
+
+      try {
+        const res = await fetch(`${API_BASE}/users/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ faceDescriptor: descriptor })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          if (data.studentId.toLowerCase() === rollId.toLowerCase()) {
+            // Auto mark attendance
+            try {
+              await fetch(`${API_BASE}/attendance/mark`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ studentId: data.studentId, faceDescriptor: descriptor })
+              });
+            } catch (e) {
+              console.warn("Auto attendance failed during login:", e);
+            }
+            
+            setLoggedInUser({ studentId: data.studentId, name: data.name });
+            setUserRole('student');
+            setIsLoggedIn(true);
+            setCurrentView('home');
+            addToast(`Access Granted. Welcome back, ${data.name}!`, 'success');
+            fetchLogs();
+            setLoginIdInput('');
+            setLoginSearchResults([]);
+          } else {
+            addToast(`Face does not match Student ID: ${rollId}`, 'error');
+          }
+        } else {
+          addToast(data.error || 'Face not recognized. Access Denied.', 'error');
+        }
+      } catch (err) {
+        // Local fallback
+        const localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+        const targetUser = localUsers.find(u => u.studentId.toLowerCase() === rollId.toLowerCase());
+        if (targetUser) {
+          const dist = euclideanDistance(descriptor, targetUser.faceDescriptor);
+          if (dist < 0.60) {
+            // Auto mark attendance locally
+            const todayStr = new Date().toISOString().split('T')[0];
+            const nowTimeStr = new Date().toTimeString().split(' ')[0];
+            let localAttendance = JSON.parse(localStorage.getItem('ritika_library_attendance') || JSON.stringify(DEFAULT_ATTENDANCE));
+            const alreadyMarked = localAttendance.some(
+              log => log.studentId === targetUser.studentId && log.date === todayStr
+            );
+            if (!alreadyMarked) {
+              const newLog = {
+                studentId: targetUser.studentId,
+                name: targetUser.name,
+                date: todayStr,
+                time: nowTimeStr,
+                method: 'Face Verify'
+              };
+              localStorage.setItem('ritika_library_attendance', JSON.stringify([...localAttendance, newLog]));
+              fetchLogs();
+            }
+
+            setLoggedInUser({ studentId: targetUser.studentId, name: targetUser.name });
+            setUserRole('student');
+            setIsLoggedIn(true);
+            setCurrentView('home');
+            addToast(`Access Granted. Welcome back, ${targetUser.name}! (Offline Mode)`, 'success');
+            setLoginIdInput('');
+            setLoginSearchResults([]);
+          } else {
+            addToast('Face verification failed. Face does not match the record.', 'error');
+          }
+        } else {
+          addToast('Student not found in local database.', 'error');
+        }
+      } finally {
+        setIsProcessingFaceLogin(false);
+      }
+    } else {
+      // New student: store the face descriptor to state so they can click submit
+      setRegFaceDescriptor(descriptor);
+    }
+  };
+
+  const handleAdminLogin = () => {
+    if (adminPassword === 'gourav289') {
+      setLoggedInUser({ name: 'Administrator' });
+      setUserRole('admin');
+      setIsLoggedIn(true);
+      setCurrentView('admin-dashboard');
+      addToast('Authorized successfully! Welcome to Admin Panel.', 'success');
+      setAdminPassword('');
+    } else {
+      addToast('Invalid password! Access Denied.', 'error');
+    }
+  };
+
+  const handleLogout = () => {
+    setLoggedInUser(null);
+    setUserRole('guest');
+    setIsLoggedIn(false);
+    setCurrentView('home');
+    setUserProfile(null);
+    setAdminActiveTab('overview');
+    addToast('Logged out successfully', 'info');
+  };
+
+  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        addToast(`Book request has been ${newStatus.toLowerCase()} successfully!`, 'success');
+        fetchOrders();
+        fetchBooks();
+      } else {
+        addToast(data.error || 'Failed to update request', 'error');
+      }
+    } catch (err) {
+      // Local fallback
+      let localOrders = JSON.parse(localStorage.getItem('ritika_library_orders') || '[]');
+      const orderIdx = localOrders.findIndex(o => o.id === orderId);
+      if (orderIdx !== -1) {
+        localOrders[orderIdx].status = newStatus;
+        localStorage.setItem('ritika_library_orders', JSON.stringify(localOrders));
+
+        if (newStatus === 'Approved') {
+          let localBooks = JSON.parse(localStorage.getItem('ritika_library_books') || JSON.stringify(DEFAULT_BOOKS));
+          const maxId = localBooks.reduce((max, b) => b.id > max ? b.id : max, 0);
+          const newBook = {
+            id: maxId + 1,
+            title: localOrders[orderIdx].title,
+            author: localOrders[orderIdx].author,
+            genre: 'Programming & Tech',
+            available: true,
+            issuedTo: null,
+            issuedName: null,
+            dueDate: null
+          };
+          localBooks.push(newBook);
+          localStorage.setItem('ritika_library_books', JSON.stringify(localBooks));
+          fetchBooks();
+        }
+        addToast(`Book request has been ${newStatus.toLowerCase()} locally!`, 'success');
+        fetchOrders();
+      }
+    }
+  };
+
+  const handleViewStudentDetails = async (student) => {
+    setSelectedAdminStudent(student);
+    setIsLoadingAdminProfile(true);
+    try {
+      const res = await fetch(`${API_BASE}/users/profile/${student.studentId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAdminStudentProfile(data);
+      } else {
+        throw new Error("API returned error status");
+      }
+    } catch (err) {
+      console.warn('Error fetching student profile, fallback to localStorage/local states:', err);
+      // Fallback
+      const localBooks = books.filter(b => b.issuedTo === student.studentId);
+      const localOrders = allOrders.filter(o => o.requestedBy === student.name || o.requestedBy === student.studentId);
+      const localAttendance = attendanceLogs.filter(a => a.studentId === student.studentId);
+
+      setAdminStudentProfile({
+        studentId: student.studentId,
+        name: student.name,
+        registeredAt: student.registeredAt,
+        issuedBooksCount: localBooks.length,
+        issuedBooks: localBooks,
+        requestedBooks: localOrders,
+        attendanceHistory: localAttendance
+      });
+    } finally {
+      setIsLoadingAdminProfile(false);
+    }
+  };
+
+  const handleDeleteStudent = async (studentId) => {
+    if (!window.confirm("Are you sure you want to deregister this student? All currently issued books will be returned.")) return;
+    try {
+      const res = await fetch(`${API_BASE}/admin/users/${studentId}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (res.ok) {
+        addToast('Student deregistered successfully!', 'success');
+        fetchUsers();
+        fetchBooks();
+      } else {
+        addToast(data.error || 'Failed to delete student', 'error');
+      }
+    } catch (err) {
+      // Local fallback
+      let localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
+      const filteredUsers = localUsers.filter(u => u.studentId !== studentId);
+      localStorage.setItem('ritika_library_users', JSON.stringify(filteredUsers));
+
+      let localBooks = JSON.parse(localStorage.getItem('ritika_library_books') || JSON.stringify(DEFAULT_BOOKS));
+      const updatedBooks = localBooks.map(book => {
+        if (book.issuedTo === studentId) {
+          return { ...book, available: true, issuedTo: null, issuedName: null, dueDate: null };
+        }
+        return book;
+      });
+      localStorage.setItem('ritika_library_books', JSON.stringify(updatedBooks));
+
+      addToast('Student deregistered locally!', 'success');
+      fetchUsers();
+      fetchBooks();
+    }
+  };
+
+  const handleAddBookSubmit = async (e) => {
+    e.preventDefault();
+    if (!newBookTitle.trim() || !newBookAuthor.trim()) {
+      addToast('Title and Author are required', 'error');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/admin/books`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: newBookTitle.trim(),
+          author: newBookAuthor.trim(),
+          genre: newBookGenre
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        addToast(`"${newBookTitle}" added to the library catalog!`, 'success');
+        setNewBookTitle('');
+        setNewBookAuthor('');
+        fetchBooks();
+      } else {
+        addToast(data.error || 'Failed to add book', 'error');
+      }
+    } catch (err) {
+      // Local fallback
+      let localBooks = JSON.parse(localStorage.getItem('ritika_library_books') || JSON.stringify(DEFAULT_BOOKS));
+      const maxId = localBooks.reduce((max, b) => b.id > max ? b.id : max, 0);
+      const newBook = {
+        id: maxId + 1,
+        title: newBookTitle.trim(),
+        author: newBookAuthor.trim(),
+        genre: newBookGenre,
+        available: true,
+        issuedTo: null,
+        issuedName: null,
+        dueDate: null
+      };
+      localBooks.push(newBook);
+      localStorage.setItem('ritika_library_books', JSON.stringify(localBooks));
+
+      addToast(`"${newBookTitle}" added locally!`, 'success');
+      setNewBookTitle('');
+      setNewBookAuthor('');
+      fetchBooks();
     }
   };
 
@@ -488,8 +861,10 @@ function App() {
   };
 
   const handleRegisterSubmit = async (e) => {
-    e.preventDefault();
-    if (!regName.trim() || !regId.trim()) {
+    if (e && e.preventDefault) e.preventDefault();
+    const finalId = (regId.trim() || loginIdInput.trim());
+    const finalName = regName.trim();
+    if (!finalName || !finalId) {
       addToast('Please enter both Name and Student ID', 'error');
       return;
     }
@@ -504,8 +879,8 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          studentId: regId.trim(),
-          name: regName.trim(),
+          studentId: finalId,
+          name: finalName,
           faceDescriptor: regFaceDescriptor
         })
       });
@@ -516,12 +891,16 @@ function App() {
         fetchUsers();
         
         // Auto Log In
-        setLoggedInUser({ studentId: regId.trim(), name: regName.trim() });
-        addToast(`Welcome to your dashboard, ${regName}!`, 'success');
+        setLoggedInUser({ studentId: finalId, name: finalName });
+        setUserRole('student');
+        setIsLoggedIn(true);
+        setCurrentView('home');
+        addToast(`Welcome to your dashboard, ${finalName}!`, 'success');
 
         // Reset fields
         setRegName('');
         setRegId('');
+        setLoginIdInput('');
         setRegFaceDescriptor(null);
       } else {
         addToast(data.error || 'Registration failed', 'error');
@@ -529,19 +908,19 @@ function App() {
     } catch (err) {
       // Local fallback
       let localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
-      const existingUserIdx = localUsers.findIndex(u => u.studentId.toLowerCase() === regId.trim().toLowerCase());
+      const existingUserIdx = localUsers.findIndex(u => u.studentId.toLowerCase() === finalId.toLowerCase());
       
       const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
       if (existingUserIdx !== -1) {
-        localUsers[existingUserIdx].name = regName.trim();
+        localUsers[existingUserIdx].name = finalName;
         localUsers[existingUserIdx].faceDescriptor = regFaceDescriptor;
         localUsers[existingUserIdx].registeredAt = timestamp;
         addToast('Face ID updated successfully in local database!', 'success');
       } else {
         const newUser = {
-          studentId: regId.trim(),
-          name: regName.trim(),
+          studentId: finalId,
+          name: finalName,
           faceDescriptor: regFaceDescriptor,
           registeredAt: timestamp
         };
@@ -553,12 +932,16 @@ function App() {
       fetchUsers();
 
       // Auto Log In
-      setLoggedInUser({ studentId: regId.trim(), name: regName.trim() });
-      addToast(`Welcome to your dashboard, ${regName}!`, 'success');
+      setLoggedInUser({ studentId: finalId, name: finalName });
+      setUserRole('student');
+      setIsLoggedIn(true);
+      setCurrentView('home');
+      addToast(`Welcome to your dashboard, ${finalName}!`, 'success');
 
       // Reset fields
       setRegName('');
       setRegId('');
+      setLoginIdInput('');
       setRegFaceDescriptor(null);
     } finally {
       setIsRegistering(false);
@@ -843,6 +1226,236 @@ function App() {
            book.author.toLowerCase().includes(searchQuery.toLowerCase());
   };
 
+  if (!isLoggedIn) {
+    return (
+      <div className="app-container">
+        {/* Toast Notifications */}
+        <div className="toast-container">
+          {toasts.map(t => (
+            <div 
+              key={t.id} 
+              className={`toast toast-${t.type} glass-panel`}
+              onClick={() => setToasts(prev => prev.filter(item => item.id !== t.id))}
+              style={{ cursor: 'pointer' }}
+              title="Click to dismiss"
+            >
+              <div className="toast-icon">
+                {t.type === 'success' && <CheckCircle2 size={16} />}
+                {t.type === 'error' && <AlertTriangle size={16} />}
+                {t.type === 'info' && <Info size={16} />}
+              </div>
+              <div style={{ flex: 1 }}>{t.message}</div>
+              <div style={{ opacity: 0.6, fontSize: '12px', fontWeight: 'bold', marginLeft: '12px', userSelect: 'none' }}>×</div>
+            </div>
+          ))}
+        </div>
+
+        <header className="app-header">
+          <nav className="nav-container" style={{ justifyContent: 'center' }}>
+            <div className="brand">
+              <div className="brand-icon">
+                <BookOpen size={20} color="#fff" />
+              </div>
+              <span className="brand-text">Library</span>
+            </div>
+          </nav>
+        </header>
+
+        <main className="auth-landing-container">
+          <div className={`auth-card glass-panel ${authTab === 'student' ? 'auth-card-wide' : ''}`}>
+            <div className="auth-header">
+              <div style={{ display: 'inline-flex', padding: '12px', background: 'var(--primary-glow)', borderRadius: '50%', marginBottom: '12px', color: 'var(--primary)' }}>
+                <BookOpen size={28} />
+              </div>
+              <h2>Library Portal</h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginTop: '6px' }}>
+                Please sign in to access the catalog, scanner, and portal.
+              </p>
+            </div>
+
+            <div className="auth-tabs">
+              <button 
+                className={`auth-tab ${authTab === 'student' ? 'active' : ''}`}
+                onClick={() => setAuthTab('student')}
+              >
+                🎓 Student Login / Register
+              </button>
+              <button 
+                className={`auth-tab ${authTab === 'admin' ? 'active' : ''}`}
+                onClick={() => setAuthTab('admin')}
+              >
+                🔑 Admin Login
+              </button>
+            </div>
+
+            {authTab === 'student' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '480px', margin: '0 auto', textAlign: 'left', width: '100%' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '700', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', textAlign: 'center' }}>
+                  Student Login / Register
+                </h3>
+                
+                <div className="input-group">
+                  <label htmlFor="studentId">Student Roll No / ID</label>
+                  <div className="search-input-wrapper">
+                    <User size={15} className="search-icon" />
+                    <input 
+                      type="text" 
+                      id="studentId"
+                      placeholder="Type Student ID or Search Name..."
+                      value={loginIdInput}
+                      onChange={(e) => {
+                        setLoginIdInput(e.target.value);
+                        setRegFaceDescriptor(null); // Reset face scan on ID change
+                      }}
+                      className="app-input"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
+                          if (isIdRegistered) {
+                            handleStudentTextLogin(loginIdInput);
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                  {loginSearchResults.length > 0 && (
+                    <ul className="search-results">
+                      {loginSearchResults.map(user => (
+                        <li 
+                          key={user.studentId} 
+                          onClick={() => {
+                            setLoginIdInput(user.studentId);
+                            setLoginSearchResults([]);
+                            setRegFaceDescriptor(null);
+                          }}
+                          className="result-item"
+                        >
+                          <span>{user.name}</span>
+                          <span className="result-item-id">{user.studentId}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {loginIdInput.trim() && (() => {
+                  const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
+                  if (isIdRegistered) {
+                    const studentName = registeredUsers.find(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase())?.name;
+                    return (
+                      <div style={{ padding: '10px 14px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px', color: 'var(--accent-green)', fontSize: '13px' }}>
+                        <strong>Returning Student: {studentName}</strong>
+                        <div style={{ marginTop: '4px', fontSize: '11px', opacity: 0.9 }}>Align your face with the scanner to log in automatically.</div>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                        <div style={{ padding: '10px 14px', background: 'rgba(124, 58, 237, 0.1)', border: '1px solid rgba(124, 58, 237, 0.2)', borderRadius: '8px', color: 'var(--primary)', fontSize: '13px' }}>
+                          <strong>New student ID detected.</strong> Please enter your full name below and scan your face to register.
+                        </div>
+                        <div className="input-group">
+                          <label htmlFor="regName">Student Full Name</label>
+                          <input 
+                            type="text" 
+                            id="regName"
+                            placeholder="Enter full name"
+                            value={regName}
+                            onChange={(e) => setRegName(e.target.value)}
+                            className="app-input"
+                            style={{ paddingLeft: '12px' }}
+                            required
+                          />
+                        </div>
+                      </div>
+                    );
+                  }
+                })()}
+
+                {loginIdInput.trim() && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                      Face ID Scanner
+                    </label>
+                    <WebcamCapture 
+                      mode={registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase()) ? "verify" : "register"}
+                      onFaceDetected={handleUnifiedFaceScan}
+                      isProcessing={isProcessingFaceLogin || isRegistering}
+                    />
+                    
+                    {(() => {
+                      const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
+                      if (isIdRegistered) {
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+                            <button 
+                              onClick={() => handleStudentTextLogin(loginIdInput)}
+                              className="app-btn btn-cyan"
+                              style={{ width: '100%' }}
+                            >
+                              <LogIn size={14} /> Access Portal (Bypass Face ID)
+                            </button>
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <button 
+                            onClick={handleRegisterSubmit}
+                            className="app-btn" 
+                            disabled={isRegistering || !regFaceDescriptor || !regName.trim()}
+                            style={{ width: '100%', marginTop: '12px' }}
+                          >
+                            {isRegistering ? 'Registering...' : regFaceDescriptor ? '✓ Register & Login' : 'Align Face to Register'}
+                          </button>
+                        );
+                      }
+                    })()}
+                  </div>
+                )}
+              </div>
+            ) : (
+              // Admin login form
+              <div className="admin-login-form" style={{ textAlign: 'left' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '700', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', textAlign: 'center' }}>
+                  Admin Authorization Gate
+                </h3>
+                
+                <div className="input-group">
+                  <label htmlFor="adminPassword">Enter Admin Password</label>
+                  <input 
+                    type="password" 
+                    id="adminPassword"
+                    placeholder="Enter password..."
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    className="app-input"
+                    style={{ paddingLeft: '12px' }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAdminLogin();
+                    }}
+                  />
+                </div>
+
+                <button 
+                  onClick={handleAdminLogin}
+                  className="app-btn"
+                  style={{ width: '100%' }}
+                  disabled={!adminPassword}
+                >
+                  <ShieldCheck size={14} /> Authorize & Enter
+                </button>
+              </div>
+            )}
+          </div>
+        </main>
+
+        <footer style={{ borderTop: '1px solid var(--border-color)', padding: '16px 24px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: 'auto' }}>
+          <p>© 2026 Library Portal. Smart face-recognition features local.</p>
+        </footer>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       {/* Toast Notifications */}
@@ -866,55 +1479,483 @@ function App() {
         ))}
       </div>
 
-      {/* Navigation Header */}
-      <header className="app-header">
-        <nav className="nav-container">
-          <a href="#" className="brand" onClick={() => setCurrentView('home')}>
-            <div className="brand-icon">
-              <BookOpen size={20} color="#fff" />
+      {/* Conditional Header based on userRole */}
+      {userRole === 'admin' ? (
+        <header className="app-header" style={{ borderBottom: '2px solid var(--primary)' }}>
+          <nav className="nav-container">
+            <div className="brand">
+              <div className="brand-icon" style={{ background: 'linear-gradient(135deg, var(--primary), var(--secondary))' }}>
+                <ShieldCheck size={20} color="#fff" />
+              </div>
+              <span className="brand-text">Library Admin</span>
             </div>
-            <span className="brand-text">Ritika Library</span>
-          </a>
-
-          <ul className="nav-links">
-            <li>
-              <button 
-                onClick={() => setCurrentView('home')} 
-                className={`nav-btn ${currentView === 'home' ? 'active' : ''}`}
-              >
-                <BookOpen size={15} /> Books Catalog
+            <ul className="nav-links">
+              <li>
+                <button 
+                  onClick={() => setCurrentView('admin-dashboard')} 
+                  className={`nav-btn ${currentView === 'admin-dashboard' ? 'active' : ''}`}
+                >
+                  <Layers size={15} /> Dashboard Control
+                </button>
+              </li>
+              <li>
+                <button 
+                  onClick={() => setCurrentView('home')} 
+                  className={`nav-btn ${currentView === 'home' ? 'active' : ''}`}
+                >
+                  <BookOpen size={15} /> View Catalog
+                </button>
+              </li>
+            </ul>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div className="user-badge" style={{ background: 'rgba(124, 58, 237, 0.08)', borderColor: 'rgba(124, 58, 237, 0.2)', color: 'var(--primary)' }}>
+                <ShieldCheck size={13} />
+                <span>Admin</span>
+              </div>
+              <button onClick={handleLogout} className="nav-btn" style={{ color: '#be123c' }}>
+                <LogOut size={15} /> Log Out
               </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setCurrentView('attendance')} 
-                className={`nav-btn ${currentView === 'attendance' ? 'active' : ''}`}
-              >
-                <Camera size={15} /> Attendance Scanner
-              </button>
-            </li>
-            <li>
-              <button 
-                onClick={() => setCurrentView('dashboard')} 
-                className={`nav-btn ${currentView === 'dashboard' ? 'active' : ''}`}
-              >
-                <FileText size={15} /> Student Portal
-              </button>
-            </li>
-          </ul>
-
-          {loggedInUser && (
-            <div className="user-badge" onClick={() => setCurrentView('dashboard')} style={{ cursor: 'pointer' }}>
-              <User size={13} />
-              <span>{loggedInUser.name}</span>
             </div>
-          )}
-        </nav>
-      </header>
+          </nav>
+        </header>
+      ) : (
+        <header className="app-header">
+          <nav className="nav-container">
+            <a href="#" className="brand" onClick={() => setCurrentView('home')}>
+              <div className="brand-icon">
+                <BookOpen size={20} color="#fff" />
+              </div>
+              <span className="brand-text">Library</span>
+            </a>
+
+            <ul className="nav-links">
+              <li>
+                <button 
+                  onClick={() => setCurrentView('home')} 
+                  className={`nav-btn ${currentView === 'home' ? 'active' : ''}`}
+                >
+                  <BookOpen size={15} /> Books Catalog
+                </button>
+              </li>
+              <li>
+                <button 
+                  onClick={() => setCurrentView('attendance')} 
+                  className={`nav-btn ${currentView === 'attendance' ? 'active' : ''}`}
+                >
+                  <Camera size={15} /> Attendance Scanner
+                </button>
+              </li>
+              <li>
+                <button 
+                  onClick={() => setCurrentView('dashboard')} 
+                  className={`nav-btn ${currentView === 'dashboard' ? 'active' : ''}`}
+                >
+                  <FileText size={15} /> Student Portal
+                </button>
+              </li>
+            </ul>
+
+            {loggedInUser && (
+              <div className="user-badge" onClick={() => setCurrentView('dashboard')} style={{ cursor: 'pointer' }}>
+                <User size={13} />
+                <span>{loggedInUser.name}</span>
+              </div>
+            )}
+          </nav>
+        </header>
+      )}
 
       {/* Main Content Area */}
       <main className="main-content">
-        
+
+        {/* ==================== VIEW: ADMIN DASHBOARD ==================== */}
+        {currentView === 'admin-dashboard' && userRole === 'admin' && (
+          <div>
+            <div className="admin-header-row">
+              <div>
+                <h2>Admin Management Panel</h2>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+                  Monitor library activity, approve book requests, deregister student profiles, and manage inventory.
+                </p>
+              </div>
+            </div>
+
+            <div className="admin-grid">
+              {/* Left Column: Sidebar Navigation */}
+              <div className="admin-sidebar glass-panel" style={{ padding: '16px' }}>
+                <button 
+                  className={`admin-menu-btn ${adminActiveTab === 'overview' ? 'active' : ''}`}
+                  onClick={() => setAdminActiveTab('overview')}
+                >
+                  <Layers size={16} /> Overview Stats
+                </button>
+                <button 
+                  className={`admin-menu-btn ${adminActiveTab === 'suggestions' ? 'active' : ''}`}
+                  onClick={() => {
+                    setAdminActiveTab('suggestions');
+                    fetchOrders();
+                  }}
+                >
+                  <BookMarked size={16} /> Book Suggestions ({allOrders.filter(o => o.status === 'Pending').length})
+                </button>
+                <button 
+                  className={`admin-menu-btn ${adminActiveTab === 'students' ? 'active' : ''}`}
+                  onClick={() => {
+                    setAdminActiveTab('students');
+                    fetchUsers();
+                  }}
+                >
+                  <User size={16} /> Student Directory ({registeredUsers.length})
+                </button>
+                <button 
+                  className={`admin-menu-btn ${adminActiveTab === 'issues' ? 'active' : ''}`}
+                  onClick={() => {
+                    setAdminActiveTab('issues');
+                    fetchBooks();
+                  }}
+                >
+                  <FileText size={16} /> Issued Books ({books.filter(b => !b.available).length})
+                </button>
+                <button 
+                  className={`admin-menu-btn ${adminActiveTab === 'logs' ? 'active' : ''}`}
+                  onClick={() => {
+                    setAdminActiveTab('logs');
+                    fetchLogs();
+                  }}
+                >
+                  <Clock size={16} /> Attendance Logs ({attendanceLogs.length})
+                </button>
+                <button 
+                  className={`admin-menu-btn ${adminActiveTab === 'add-book' ? 'active' : ''}`}
+                  onClick={() => setAdminActiveTab('add-book')}
+                >
+                  <Plus size={16} /> Add New Books
+                </button>
+              </div>
+
+              {/* Right Column: Panel Contents */}
+              <div className="admin-panel-content">
+                
+                {/* Tab 1: Overview */}
+                {adminActiveTab === 'overview' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
+                      <div className="glass-panel stat-item" style={{ padding: '20px' }}>
+                        <span className="stat-label">Total Registered Students</span>
+                        <span className="stat-value glow-purple">{registeredUsers.length}</span>
+                      </div>
+                      <div className="glass-panel stat-item" style={{ padding: '20px' }}>
+                        <span className="stat-label">Total Books Catalog</span>
+                        <span className="stat-value glow-cyan">{books.length}</span>
+                      </div>
+                      <div className="glass-panel stat-item" style={{ padding: '20px' }}>
+                        <span className="stat-label">Currently Issued Books</span>
+                        <span className="stat-value" style={{ color: 'var(--accent-red)' }}>{books.filter(b => !b.available).length}</span>
+                      </div>
+                      <div className="glass-panel stat-item" style={{ padding: '20px' }}>
+                        <span className="stat-label">Attendance Logged Today</span>
+                        <span className="stat-value" style={{ color: 'var(--accent-green)' }}>{stats.logsToday}</span>
+                      </div>
+                    </div>
+
+                    <div className="glass-panel" style={{ padding: '24px' }}>
+                      <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Sparkles size={18} color="var(--primary)" /> Quick System Status
+                      </h3>
+                      <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                        Library Face-Recognition management system is fully active. 
+                        {isUsingMockDb ? (
+                          <strong style={{ color: 'var(--secondary)' }}> Currently running in Local Offline Mode. Data is synchronized with LocalStorage.</strong>
+                        ) : (
+                          <strong style={{ color: 'var(--accent-green)' }}> Connected successfully to Python Flask API Backend service.</strong>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tab 2: Book Suggestions (Orders) */}
+                {adminActiveTab === 'suggestions' && (
+                  <div className="glass-panel" style={{ padding: '24px' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Student Book Suggestions ({allOrders.length})</h3>
+                    
+                    {allOrders.length === 0 ? (
+                      <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>No suggestions submitted by students yet.</p>
+                    ) : (
+                      <div className="books-table-wrapper">
+                        <table className="app-table">
+                          <thead>
+                            <tr>
+                              <th>ID</th>
+                              <th>Date</th>
+                              <th>Title</th>
+                              <th>Author</th>
+                              <th>Requested By</th>
+                              <th>Reason</th>
+                              <th>Status</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allOrders.map(order => (
+                              <tr key={order.id}>
+                                <td>#{order.id}</td>
+                                <td style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>{order.date}</td>
+                                <td style={{ fontWeight: '700' }}>{order.title}</td>
+                                <td>{order.author}</td>
+                                <td>{order.requestedBy}</td>
+                                <td style={{ fontSize: '12px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={order.reason}>{order.reason || 'N/A'}</td>
+                                <td>
+                                  <span className={`status-badge status-${order.status.toLowerCase()}`}>
+                                    {order.status}
+                                  </span>
+                                </td>
+                                <td>
+                                  {order.status === 'Pending' ? (
+                                    <div className="action-buttons">
+                                      <button 
+                                        onClick={() => handleUpdateOrderStatus(order.id, 'Approved')}
+                                        className="app-btn btn-cyan"
+                                        style={{ padding: '4px 10px', fontSize: '11px', background: 'var(--accent-green)' }}
+                                      >
+                                        Approve
+                                      </button>
+                                      <button 
+                                        onClick={() => handleUpdateOrderStatus(order.id, 'Rejected')}
+                                        className="app-btn btn-secondary"
+                                        style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--accent-red)', borderColor: 'var(--accent-red-glow)' }}
+                                      >
+                                        Reject
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Resolved</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tab 3: Student Directory */}
+                {adminActiveTab === 'students' && (
+                  <div className="glass-panel" style={{ padding: '24px' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Registered Students Directory</h3>
+                    
+                    {registeredUsers.length === 0 ? (
+                      <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>No student profiles registered in system yet.</p>
+                    ) : (
+                      <div className="books-table-wrapper">
+                        <table className="app-table">
+                          <thead>
+                            <tr>
+                              <th>Student Roll ID</th>
+                              <th>Student Full Name</th>
+                              <th>Registered At</th>
+                              <th>Attendance / Check-ins</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...registeredUsers]
+                              .sort((a, b) => a.name.localeCompare(b.name))
+                              .map(student => {
+                                const count = attendanceLogs.filter(log => log.studentId === student.studentId).length;
+                                return (
+                                  <tr 
+                                    key={student.studentId} 
+                                    onClick={() => handleViewStudentDetails(student)}
+                                    style={{ cursor: 'pointer' }}
+                                    className="clickable-row"
+                                    title="Click to view detailed student profile"
+                                  >
+                                    <td style={{ fontWeight: '700' }}>{student.studentId}</td>
+                                    <td>{student.name}</td>
+                                    <td>{student.registeredAt || 'N/A'}</td>
+                                    <td>
+                                      <span className="status-badge status-approved" style={{ padding: '4px 8px', borderRadius: '12px', fontSize: '11px' }}>
+                                        {count} {count === 1 ? 'check-in' : 'check-ins'}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation(); // prevent modal opening
+                                          handleDeleteStudent(student.studentId);
+                                        }}
+                                        className="app-btn btn-secondary"
+                                        style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--accent-red)', borderColor: 'var(--accent-red-glow)' }}
+                                      >
+                                        Deregister Profile
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tab 4: Issued Books */}
+                {adminActiveTab === 'issues' && (
+                  <div className="glass-panel" style={{ padding: '24px' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Currently Active Book checkouts</h3>
+                    
+                    {books.filter(b => !b.available).length === 0 ? (
+                      <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>No library books are currently checked out.</p>
+                    ) : (
+                      <div className="books-table-wrapper">
+                        <table className="app-table">
+                          <thead>
+                            <tr>
+                              <th>Book ID</th>
+                              <th>Book Title</th>
+                              <th>Author</th>
+                              <th>Issued To Student</th>
+                              <th>Student ID</th>
+                              <th>Due Date</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {books.filter(b => !b.available).map(book => (
+                              <tr key={book.id}>
+                                <td>#{book.id}</td>
+                                <td style={{ fontWeight: '700' }}>{book.title}</td>
+                                <td>{book.author}</td>
+                                <td>{book.issuedName}</td>
+                                <td>{book.issuedTo}</td>
+                                <td style={{ color: 'var(--accent-red)', fontWeight: '700' }}>{book.dueDate}</td>
+                                <td>
+                                  <button 
+                                    onClick={() => handleReturnBook(book.id)}
+                                    className="app-btn btn-secondary"
+                                    style={{ padding: '4px 10px', fontSize: '11px', color: 'var(--primary)', borderColor: 'var(--primary-glow)' }}
+                                  >
+                                    Force Return
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tab 5: Attendance Logs */}
+                {adminActiveTab === 'logs' && (
+                  <div className="glass-panel" style={{ padding: '24px' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px' }}>Full Scan Attendance Logs ({attendanceLogs.length})</h3>
+                    
+                    {attendanceLogs.length === 0 ? (
+                      <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>No attendance log records recorded yet.</p>
+                    ) : (
+                      <div className="books-table-wrapper">
+                        <table className="app-table">
+                          <thead>
+                            <tr>
+                              <th>Index</th>
+                              <th>Student Name</th>
+                              <th>Roll ID</th>
+                              <th>Time</th>
+                              <th>Date</th>
+                              <th>Method</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {attendanceLogs.map((log, idx) => (
+                              <tr key={idx}>
+                                <td>#{attendanceLogs.length - idx}</td>
+                                <td style={{ fontWeight: '700' }}>{log.name}</td>
+                                <td>{log.studentId}</td>
+                                <td>{log.time}</td>
+                                <td>{log.date}</td>
+                                <td>
+                                  <span className={`status-badge ${log.method === 'Face Verify' ? 'status-approved' : 'status-pending'}`}>
+                                    {log.method || 'Auto-Scan'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tab 6: Add Book Form */}
+                {adminActiveTab === 'add-book' && (
+                  <div className="glass-panel" style={{ padding: '24px' }}>
+                    <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '20px' }}>Add New Book to Catalog</h3>
+                    
+                    <form onSubmit={handleAddBookSubmit}>
+                      <div className="add-book-grid">
+                        <div className="input-group">
+                          <label htmlFor="addTitle">Book Title</label>
+                          <input 
+                            type="text" 
+                            id="addTitle" 
+                            placeholder="e.g. Design Patterns"
+                            value={newBookTitle}
+                            onChange={(e) => setNewBookTitle(e.target.value)}
+                            className="app-input"
+                            style={{ paddingLeft: '12px' }}
+                            required
+                          />
+                        </div>
+                        <div className="input-group">
+                          <label htmlFor="addAuthor">Book Author</label>
+                          <input 
+                            type="text" 
+                            id="addAuthor" 
+                            placeholder="e.g. Erich Gamma"
+                            value={newBookAuthor}
+                            onChange={(e) => setNewBookAuthor(e.target.value)}
+                            className="app-input"
+                            style={{ paddingLeft: '12px' }}
+                            required
+                          />
+                        </div>
+                        <div className="input-group">
+                          <label htmlFor="addGenre">Genre / Category</label>
+                          <select 
+                            id="addGenre"
+                            value={newBookGenre}
+                            onChange={(e) => setNewBookGenre(e.target.value)}
+                            className="app-input"
+                            style={{ paddingLeft: '12px' }}
+                          >
+                            <option value="Programming & Tech">Programming & Tech</option>
+                            <option value="Science & Humanity">Science & Humanity</option>
+                            <option value="Self-Help & Business">Self-Help & Business</option>
+                            <option value="Fiction & Literature">Fiction & Literature</option>
+                            <option value="Fantasy & Adventure">Fantasy & Adventure</option>
+                          </select>
+                        </div>
+                      </div>
+                      
+                      <button type="submit" className="app-btn" style={{ marginTop: '8px' }}>
+                        <Plus size={14} /> Add Book to Shelves
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ==================== VIEW: HOME (E-COMMERCE STYLE SHOWCASE) ==================== */}
         {currentView === 'home' && (
           <div>
@@ -922,18 +1963,22 @@ function App() {
             <div className="homepage-hero">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
                 <div>
-                  <h1>Ritika Library Showcase</h1>
+                  <h1>Library Showcase</h1>
                   <p>
                     Browse and check out real-world books across programming, science, self-help, fiction, and fantasy. Instant book issuing powered by Face ID.
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: '10px' }}>
-                  <button onClick={() => setIsOrderModalOpen(true)} className="app-btn">
-                    <Plus size={15} /> Order New Book
-                  </button>
-                  <button onClick={() => setCurrentView('attendance')} className="app-btn btn-secondary">
-                    <Camera size={15} /> Scan Attendance
-                  </button>
+                  {userRole === 'student' && (
+                    <button onClick={() => setIsOrderModalOpen(true)} className="app-btn">
+                      <Plus size={15} /> Order New Book
+                    </button>
+                  )}
+                  {userRole === 'student' && (
+                    <button onClick={() => setCurrentView('attendance')} className="app-btn btn-secondary">
+                      <Camera size={15} /> Scan Attendance
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1196,132 +2241,130 @@ function App() {
         {currentView === 'dashboard' && (
           <div>
             {!loggedInUser ? (
-              // Side-by-side Unified Portal Login & Register
-              <div className="portal-auth-container">
-                {/* Left Card: Login */}
-                <div className="portal-auth-card glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}>
-                  <div>
-                    <h2 className="section-title" style={{ justifyContent: 'center' }}>
-                      <LogIn size={18} color="var(--primary)" />
-                      Student Login
-                    </h2>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px', textAlign: 'center' }}>
-                      Enter your Student ID / Roll No to access your dashboard.
-                    </p>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', textAlign: 'left', marginBottom: '24px' }}>
-                      <div className="input-group">
-                        <label htmlFor="loginId">Student Roll No / ID</label>
-                        <div className="search-input-wrapper">
-                          <User size={15} className="search-icon" />
-                          <input 
-                            type="text" 
-                            id="loginId"
-                            placeholder="Type Student ID or Search Name..."
-                            value={loginIdInput}
-                            onChange={(e) => setLoginIdInput(e.target.value)}
-                            className="app-input"
-                          />
-                        </div>
-
-                        {loginSearchResults.length > 0 && (
-                          <ul className="search-results" style={{ marginTop: '4px' }}>
-                            {loginSearchResults.map(user => (
-                              <li 
-                                key={user.studentId} 
-                                onClick={() => {
-                                  setLoginIdInput(user.studentId);
-                                  setLoginSearchResults([]);
-                                }}
-                                className="result-item"
-                              >
-                                <span>{user.name}</span>
-                                <span className="result-item-id">{user.studentId}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
+              <div className="glass-panel" style={{ padding: '32px', maxWidth: '500px', margin: '0 auto', width: '100%' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', textAlign: 'left' }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', textAlign: 'center' }}>
+                    Student Portal (Login / Register)
+                  </h3>
+                  
+                  <div className="input-group">
+                    <label htmlFor="portalStudentId">Student Roll ID / ID</label>
+                    <div className="search-input-wrapper">
+                      <User size={15} className="search-icon" />
+                      <input 
+                        type="text" 
+                        id="portalStudentId"
+                        placeholder="Type Student ID or Search Name..."
+                        value={loginIdInput}
+                        onChange={(e) => {
+                          setLoginIdInput(e.target.value);
+                          setRegFaceDescriptor(null);
+                        }}
+                        className="app-input"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
+                            if (isIdRegistered) {
+                              handleStudentTextLogin(loginIdInput);
+                            }
+                          }
+                        }}
+                      />
                     </div>
+                    {loginSearchResults.length > 0 && (
+                      <ul className="search-results">
+                        {loginSearchResults.map(user => (
+                          <li 
+                            key={user.studentId} 
+                            onClick={() => {
+                              setLoginIdInput(user.studentId);
+                              setLoginSearchResults([]);
+                              setRegFaceDescriptor(null);
+                            }}
+                            className="result-item"
+                          >
+                            <span>{user.name}</span>
+                            <span className="result-item-id">{user.studentId}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
 
-                  <button 
-                    onClick={() => handleTextLoginSubmit(loginIdInput)}
-                    className="app-btn btn-cyan"
-                    style={{ width: '100%', marginTop: 'auto' }}
-                    disabled={!loginIdInput.trim()}
-                  >
-                    <LogIn size={14} /> Access Dashboard
-                  </button>
-                </div>
-
-                {/* Right Card: Register Face ID */}
-                <div className="portal-auth-card glass-panel">
-                  <h2 className="section-title">
-                    <UserPlus size={18} color="var(--primary)" />
-                    Register Face ID Profile
-                  </h2>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>
-                    Register once. Position your face in front of the camera, enter your name/roll no, and save to register.
-                  </p>
-
-                  <form onSubmit={handleRegisterSubmit}>
-                    <div className="register-card-layout">
-                      {/* Left Column: Camera Scanner */}
-                      <div className="register-camera-wrapper" style={{ margin: 0 }}>
-                        <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '6px', display: 'block' }}>
-                          Camera Scanner (Hold still when face is aligned)
-                        </label>
-                        <WebcamCapture 
-                          mode="register"
-                          onFaceDetected={handleRegisterFace}
-                          isProcessing={false}
-                        />
-                      </div>
-
-                      {/* Right Column: Text inputs and Submit action */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', justifyContent: 'center', height: '100%' }}>
-                        <div className="input-group flex-1">
-                          <label htmlFor="regName">Student Full Name</label>
-                          <input 
-                            type="text" 
-                            id="regName"
-                            placeholder="Enter full name"
-                            value={regName}
-                            onChange={(e) => setRegName(e.target.value)}
-                            className="app-input"
-                            style={{ paddingLeft: '12px' }}
-                            required
-                          />
+                  {loginIdInput.trim() && (() => {
+                    const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
+                    if (isIdRegistered) {
+                      const studentName = registeredUsers.find(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase())?.name;
+                      return (
+                        <div style={{ padding: '10px 14px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px', color: 'var(--accent-green)', fontSize: '13px' }}>
+                          <strong>Returning Student: {studentName}</strong>
+                          <div style={{ marginTop: '4px', fontSize: '11px', opacity: 0.9 }}>Align your face with the scanner to log in automatically.</div>
                         </div>
-                        
-                        <div className="input-group flex-1">
-                          <label htmlFor="regId">Student Roll No / ID</label>
-                          <input 
-                            type="text" 
-                            id="regId"
-                            placeholder="e.g. S-2026-104"
-                            value={regId}
-                            onChange={(e) => setRegId(e.target.value)}
-                            className="app-input"
-                            style={{ paddingLeft: '12px' }}
-                            required
-                          />
+                      );
+                    } else {
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                          <div style={{ padding: '10px 14px', background: 'rgba(124, 58, 237, 0.1)', border: '1px solid rgba(124, 58, 237, 0.2)', borderRadius: '8px', color: 'var(--primary)', fontSize: '13px' }}>
+                            <strong>New student ID detected.</strong> Please enter your full name below and scan your face to register.
+                          </div>
+                          <div className="input-group">
+                            <label htmlFor="portalRegName">Student Full Name</label>
+                            <input 
+                              type="text" 
+                              id="portalRegName"
+                              placeholder="Enter full name"
+                              value={regName}
+                              onChange={(e) => setRegName(e.target.value)}
+                              className="app-input"
+                              style={{ paddingLeft: '12px' }}
+                              required
+                            />
+                          </div>
                         </div>
+                      );
+                    }
+                  })()}
 
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-                          <button 
-                            type="submit" 
-                            className="app-btn" 
-                            disabled={isRegistering || !regFaceDescriptor}
-                            style={{ width: '100%' }}
-                          >
-                            {isRegistering ? 'Registering...' : 'Save Profile & Face ID'}
-                          </button>
-                        </div>
-                      </div>
+                  {loginIdInput.trim() && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                        Face ID Scanner
+                      </label>
+                      <WebcamCapture 
+                        mode={registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase()) ? "verify" : "register"}
+                        onFaceDetected={handleUnifiedFaceScan}
+                        isProcessing={isProcessingFaceLogin || isRegistering}
+                      />
+                      
+                      {(() => {
+                        const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
+                        if (isIdRegistered) {
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+                              <button 
+                                onClick={() => handleStudentTextLogin(loginIdInput)}
+                                className="app-btn btn-cyan"
+                                style={{ width: '100%' }}
+                              >
+                                <LogIn size={14} /> Access Portal (Bypass Face ID)
+                              </button>
+                            </div>
+                          );
+                        } else {
+                          return (
+                            <button 
+                              onClick={handleRegisterSubmit}
+                              className="app-btn" 
+                              disabled={isRegistering || !regFaceDescriptor || !regName.trim()}
+                              style={{ width: '100%', marginTop: '12px' }}
+                            >
+                              {isRegistering ? 'Registering...' : regFaceDescriptor ? '✓ Register & Login' : 'Align Face to Register'}
+                            </button>
+                          );
+                        }
+                      })()}
                     </div>
-                  </form>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1353,11 +2396,7 @@ function App() {
                   </div>
 
                   <button 
-                    onClick={() => {
-                      setLoggedInUser(null);
-                      setUserProfile(null);
-                      addToast('Logged out successfully', 'info');
-                    }}
+                    onClick={handleLogout}
                     className="app-btn btn-secondary"
                     style={{ width: '100%', marginTop: '12px', display: 'flex', gap: '8px', color: '#be123c', borderColor: '#fecdd3' }}
                   >
@@ -1657,6 +2696,164 @@ function App() {
         />
       )}
 
+      {/* ==================== MODAL: ADMIN STUDENT DETAILS ==================== */}
+      {selectedAdminStudent && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '800px', width: '90%' }}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ padding: '8px', background: 'var(--primary-glow)', borderRadius: '50%', color: 'var(--primary)' }}>
+                  <User size={24} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', margin: 0 }}>Student Profile Details</h3>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>ID: {selectedAdminStudent.studentId}</span>
+                </div>
+              </div>
+              <button 
+                className="modal-close" 
+                onClick={() => {
+                  setSelectedAdminStudent(null);
+                  setAdminStudentProfile(null);
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {isLoadingAdminProfile ? (
+              <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 8px auto', display: 'block', animation: 'spin 1.5s infinite linear', color: 'var(--primary)' }} />
+                <span>Loading student records...</span>
+              </div>
+            ) : adminStudentProfile ? (
+              <div className="student-profile-details-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px', textAlign: 'left' }}>
+                {/* Left Side: Summary Cards */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div className="glass-panel" style={{ padding: '16px', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
+                    <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Student Info</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+                      <div>
+                        <span style={{ color: 'var(--text-secondary)' }}>Full Name:</span>
+                        <div style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{adminStudentProfile.name}</div>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-secondary)' }}>Student Roll ID:</span>
+                        <div style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{adminStudentProfile.studentId}</div>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-secondary)' }}>Registered Since:</span>
+                        <div style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{adminStudentProfile.registeredAt || 'N/A'}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel" style={{ padding: '16px', border: '1px solid var(--border-color)', borderRadius: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', textAlign: 'center' }}>
+                    <div style={{ padding: '8px', background: 'rgba(124, 58, 237, 0.05)', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>Check-ins</span>
+                      <strong style={{ fontSize: '18px', color: 'var(--primary)' }}>{adminStudentProfile.attendanceHistory?.length || 0}</strong>
+                    </div>
+                    <div style={{ padding: '8px', background: 'rgba(16, 185, 129, 0.05)', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>Books Issued</span>
+                      <strong style={{ fontSize: '18px', color: 'var(--accent-green)' }}>{adminStudentProfile.issuedBooks?.length || 0}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Side: Detailed logs & records */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxHeight: '420px', overflowY: 'auto', paddingRight: '8px' }}>
+                  {/* Currently Issued Books */}
+                  <div>
+                    <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>
+                      Currently Issued Books ({adminStudentProfile.issuedBooks?.length || 0})
+                    </h4>
+                    {!adminStudentProfile.issuedBooks || adminStudentProfile.issuedBooks.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No books currently checked out.</p>
+                    ) : (
+                      <ul style={{ paddingLeft: '20px', margin: '4px 0', fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {adminStudentProfile.issuedBooks.map(b => (
+                          <li key={b.id}>
+                            <strong>"{b.title}"</strong> by {b.author} <span style={{ color: 'var(--accent-red)', fontSize: '11px', fontWeight: 'bold' }}>(Due: {b.dueDate})</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {/* Suggestion History */}
+                  <div>
+                    <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>
+                      Book Request History ({adminStudentProfile.requestedBooks?.length || 0})
+                    </h4>
+                    {!adminStudentProfile.requestedBooks || adminStudentProfile.requestedBooks.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No requests submitted.</p>
+                    ) : (
+                      <div className="books-table-wrapper" style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                        <table className="app-table" style={{ fontSize: '11px' }}>
+                          <thead>
+                            <tr>
+                              <th>Date</th>
+                              <th>Book Info</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {adminStudentProfile.requestedBooks.map(o => (
+                              <tr key={o.id}>
+                                <td>{o.date?.split(' ')[0]}</td>
+                                <td><strong>{o.title}</strong><br/>{o.author}</td>
+                                <td>
+                                  <span className={`status-badge status-${o.status.toLowerCase()}`} style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                    {o.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Attendance Log History */}
+                  <div>
+                    <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px' }}>
+                      Detailed Attendance Logs ({adminStudentProfile.attendanceHistory?.length || 0})
+                    </h4>
+                    {!adminStudentProfile.attendanceHistory || adminStudentProfile.attendanceHistory.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No attendance logs recorded.</p>
+                    ) : (
+                      <div className="books-table-wrapper" style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                        <table className="app-table" style={{ fontSize: '11px' }}>
+                          <thead>
+                            <tr>
+                              <th>Date</th>
+                              <th>Time</th>
+                              <th>Method</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {adminStudentProfile.attendanceHistory.map((item, idx) => (
+                              <tr key={idx}>
+                                <td>{item.date}</td>
+                                <td>{item.time}</td>
+                                <td>{item.method}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Could not load profile details.</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       <footer style={{ marginTop: 'auto', borderTop: '1px solid var(--border-color)', padding: '16px 24px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
         {isUsingMockDb && (
@@ -1674,7 +2871,7 @@ function App() {
             🔌 Running in Client-Side Offline Database Mode (Data saved to your browser)
           </div>
         )}
-        <p>© 2026 Ritika Library Portal. Smart face-recognition features local via face-api.js.</p>
+        <p>© 2026 Library Portal. Smart face-recognition features local via face-api.js.</p>
       </footer>
     </div>
   );

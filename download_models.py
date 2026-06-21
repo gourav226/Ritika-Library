@@ -22,7 +22,7 @@ FILES_TO_DOWNLOAD = [
 ]
 
 print("======================================================")
-print("     Ritika Library Face-AI Local Setup")
+print("     Library Face-AI Local Setup")
 print("======================================================")
 
 # 1. Download face-api.min.js
