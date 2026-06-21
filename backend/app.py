@@ -168,10 +168,11 @@ def register_user():
     data = request.json
     student_id = data.get('studentId')
     name = data.get('name')
+    password = data.get('password')
     face_descriptor = data.get('faceDescriptor') # list of 128 floats
     
-    if not student_id or not name or not face_descriptor:
-        return jsonify({"error": "Missing studentId, name, or faceDescriptor"}), 400
+    if not student_id or not name or not face_descriptor or not password:
+        return jsonify({"error": "Missing studentId, name, password, or faceDescriptor"}), 400
         
     if len(face_descriptor) != 128:
         return jsonify({"error": "Face descriptor must contain exactly 128 numerical values"}), 400
@@ -184,15 +185,17 @@ def register_user():
         if user['studentId'] == student_id:
             # Overwrite face id if user wants to re-register
             user['name'] = name
+            user['password'] = password
             user['faceDescriptor'] = face_descriptor
             user['registeredAt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             save_db(db)
-            return jsonify({"success": True, "message": "Face ID updated successfully"})
+            return jsonify({"success": True, "message": "Face ID and Password updated successfully"})
             
     # Add new user
     new_user = {
         "studentId": student_id,
         "name": name,
+        "password": password,
         "faceDescriptor": face_descriptor,
         "registeredAt": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
@@ -200,7 +203,33 @@ def register_user():
     db['users'] = users
     save_db(db)
     
-    return jsonify({"success": True, "message": "Student registered with Face ID successfully"})
+    return jsonify({"success": True, "message": "Student registered with Face ID and Password successfully"})
+
+@app.route('/api/users/login_text', methods=['POST'])
+def login_user_text():
+    data = request.json
+    student_id = data.get('studentId')
+    password = data.get('password')
+    
+    if not student_id or not password:
+        return jsonify({"error": "Missing studentId or password"}), 400
+        
+    db = load_db()
+    users = db.get('users', [])
+    
+    for user in users:
+        if user['studentId'].lower() == student_id.lower():
+            expected_password = user.get('password', '123') # Default fallback if password not set initially
+            if expected_password == password:
+                return jsonify({
+                    "success": True,
+                    "studentId": user['studentId'],
+                    "name": user['name']
+                })
+            else:
+                return jsonify({"error": "Invalid password"}), 401
+                
+    return jsonify({"error": "Student ID not found"}), 404
 
 
 # ==================== FACE ID ATTENDANCE ====================

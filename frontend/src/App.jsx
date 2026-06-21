@@ -90,7 +90,6 @@ function App() {
   const [orderTitle, setOrderTitle] = useState('');
   const [orderAuthor, setOrderAuthor] = useState('');
   const [orderReason, setOrderReason] = useState('');
-  
   // Book Issue Modal (Text checkout form)
   const [issuingBook, setIssuingBook] = useState(null); // book object
   const [isIssueModalOpen, setIsIssueModalOpen] = useState(false);
@@ -102,6 +101,11 @@ function App() {
   const [selectedAdminStudent, setSelectedAdminStudent] = useState(null);
   const [adminStudentProfile, setAdminStudentProfile] = useState(null);
   const [isLoadingAdminProfile, setIsLoadingAdminProfile] = useState(false);
+
+  // Student Auth Portal Login / Register Toggles and Password states
+  const [studentSubTab, setStudentSubTab] = useState('login'); // 'login' | 'register'
+  const [loginPasswordInput, setLoginPasswordInput] = useState('');
+  const [regPassword, setRegPassword] = useState('');
 
   // Global Toasts State
   const [toasts, setToasts] = useState([]);
@@ -487,38 +491,49 @@ function App() {
     setLoginSearchResults(filtered.slice(0, 5));
   }, [loginIdInput, registeredUsers]);
 
-  const handleStudentTextLogin = async (studentId) => {
-    if (!studentId.trim()) {
-      addToast('Please enter your Student ID', 'error');
+  const handleStudentTextLogin = async (studentId, password) => {
+    if (!studentId.trim() || !password.trim()) {
+      addToast('Please enter both Student ID and Password', 'error');
       return;
     }
 
     try {
-      const res = await fetch(`${API_BASE}/users/profile/${studentId.trim()}`);
+      const res = await fetch(`${API_BASE}/users/login_text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: studentId.trim(), password: password.trim() })
+      });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
         setLoggedInUser({ studentId: data.studentId, name: data.name });
         setUserRole('student');
         setIsLoggedIn(true);
         setCurrentView('home');
         addToast(`Access Granted. Welcome back, ${data.name}!`, 'success');
         setLoginIdInput('');
+        setLoginPasswordInput('');
         setLoginSearchResults([]);
       } else {
-        addToast('Student ID not found. Please register under "Register Face ID" first.', 'error');
+        addToast(data.error || 'Invalid credentials', 'error');
       }
     } catch (err) {
       // Local fallback
       const localUsers = JSON.parse(localStorage.getItem('ritika_library_users') || JSON.stringify(DEFAULT_USERS));
       const user = localUsers.find(u => u.studentId.toLowerCase() === studentId.trim().toLowerCase());
       if (user) {
-        setLoggedInUser({ studentId: user.studentId, name: user.name });
-        setUserRole('student');
-        setIsLoggedIn(true);
-        setCurrentView('home');
-        addToast(`Access Granted. Welcome back, ${user.name}! (Offline Mode)`, 'success');
-        setLoginIdInput('');
-        setLoginSearchResults([]);
+        const expectedPassword = user.password || "123";
+        if (password.trim() === expectedPassword) {
+          setLoggedInUser({ studentId: user.studentId, name: user.name });
+          setUserRole('student');
+          setIsLoggedIn(true);
+          setCurrentView('home');
+          addToast(`Access Granted. Welcome back, ${user.name}! (Offline Mode)`, 'success');
+          setLoginIdInput('');
+          setLoginPasswordInput('');
+          setLoginSearchResults([]);
+        } else {
+          addToast('Invalid password! (Offline Mode)', 'error');
+        }
       } else {
         addToast('Student ID not found in local database. Please register first.', 'error');
       }
@@ -864,8 +879,9 @@ function App() {
     if (e && e.preventDefault) e.preventDefault();
     const finalId = (regId.trim() || loginIdInput.trim());
     const finalName = regName.trim();
-    if (!finalName || !finalId) {
-      addToast('Please enter both Name and Student ID', 'error');
+    const finalPassword = regPassword.trim();
+    if (!finalName || !finalId || !finalPassword) {
+      addToast('Please enter Name, Student ID, and Password', 'error');
       return;
     }
     if (!regFaceDescriptor) {
@@ -881,6 +897,7 @@ function App() {
         body: JSON.stringify({
           studentId: finalId,
           name: finalName,
+          password: finalPassword,
           faceDescriptor: regFaceDescriptor
         })
       });
@@ -900,6 +917,7 @@ function App() {
         // Reset fields
         setRegName('');
         setRegId('');
+        setRegPassword('');
         setLoginIdInput('');
         setRegFaceDescriptor(null);
       } else {
@@ -914,18 +932,20 @@ function App() {
 
       if (existingUserIdx !== -1) {
         localUsers[existingUserIdx].name = finalName;
+        localUsers[existingUserIdx].password = finalPassword;
         localUsers[existingUserIdx].faceDescriptor = regFaceDescriptor;
         localUsers[existingUserIdx].registeredAt = timestamp;
-        addToast('Face ID updated successfully in local database!', 'success');
+        addToast('Face ID and Password updated successfully in local database!', 'success');
       } else {
         const newUser = {
           studentId: finalId,
           name: finalName,
+          password: finalPassword,
           faceDescriptor: regFaceDescriptor,
           registeredAt: timestamp
         };
         localUsers.push(newUser);
-        addToast('Student registered with Face ID successfully in local database!', 'success');
+        addToast('Student registered with Face ID and Password successfully in local database!', 'success');
       }
 
       localStorage.setItem('ritika_library_users', JSON.stringify(localUsers));
@@ -941,6 +961,7 @@ function App() {
       // Reset fields
       setRegName('');
       setRegId('');
+      setRegPassword('');
       setLoginIdInput('');
       setRegFaceDescriptor(null);
     } finally {
@@ -1291,126 +1312,196 @@ function App() {
             {authTab === 'student' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '480px', margin: '0 auto', textAlign: 'left', width: '100%' }}>
                 <h3 style={{ fontSize: '16px', fontWeight: '700', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', textAlign: 'center' }}>
-                  Student Login / Register
+                  Student Portal
                 </h3>
-                
-                <div className="input-group">
-                  <label htmlFor="studentId">Student Roll No / ID</label>
-                  <div className="search-input-wrapper">
-                    <User size={15} className="search-icon" />
-                    <input 
-                      type="text" 
-                      id="studentId"
-                      placeholder="Type Student ID or Search Name..."
-                      value={loginIdInput}
-                      onChange={(e) => {
-                        setLoginIdInput(e.target.value);
-                        setRegFaceDescriptor(null); // Reset face scan on ID change
-                      }}
-                      className="app-input"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
-                          if (isIdRegistered) {
-                            handleStudentTextLogin(loginIdInput);
-                          }
-                        }
-                      }}
-                    />
-                  </div>
-                  {loginSearchResults.length > 0 && (
-                    <ul className="search-results">
-                      {loginSearchResults.map(user => (
-                        <li 
-                          key={user.studentId} 
-                          onClick={() => {
-                            setLoginIdInput(user.studentId);
-                            setLoginSearchResults([]);
-                            setRegFaceDescriptor(null);
-                          }}
-                          className="result-item"
-                        >
-                          <span>{user.name}</span>
-                          <span className="result-item-id">{user.studentId}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+
+                {/* Sub-tabs: Login & Sign Up */}
+                <div style={{ display: 'flex', gap: '8px', background: 'rgba(124, 58, 237, 0.05)', padding: '6px', borderRadius: '10px', border: '1px solid rgba(124, 58, 237, 0.1)' }}>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setStudentSubTab('login');
+                      setRegFaceDescriptor(null);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      background: studentSubTab === 'login' ? 'var(--primary)' : 'transparent',
+                      color: studentSubTab === 'login' ? '#fff' : 'var(--text-secondary)',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    🔑 Sign In / Login
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setStudentSubTab('register');
+                      setRegFaceDescriptor(null);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '8px',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      background: studentSubTab === 'register' ? 'var(--primary)' : 'transparent',
+                      color: studentSubTab === 'register' ? '#fff' : 'var(--text-secondary)',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    📝 New User (Sign Up)
+                  </button>
                 </div>
 
-                {loginIdInput.trim() && (() => {
-                  const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
-                  if (isIdRegistered) {
-                    const studentName = registeredUsers.find(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase())?.name;
-                    return (
-                      <div style={{ padding: '10px 14px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px', color: 'var(--accent-green)', fontSize: '13px' }}>
-                        <strong>Returning Student: {studentName}</strong>
-                        <div style={{ marginTop: '4px', fontSize: '11px', opacity: 0.9 }}>Align your face with the scanner to log in automatically.</div>
+                {studentSubTab === 'login' ? (
+                  /* --- SUB-TAB: STUDENT LOGIN --- */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div className="input-group">
+                      <label htmlFor="studentId">Student Roll No / ID</label>
+                      <div className="search-input-wrapper">
+                        <User size={15} className="search-icon" />
+                        <input 
+                          type="text" 
+                          id="studentId"
+                          placeholder="Type Student ID or Search Name..."
+                          value={loginIdInput}
+                          onChange={(e) => setLoginIdInput(e.target.value)}
+                          className="app-input"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleStudentTextLogin(loginIdInput, loginPasswordInput);
+                          }}
+                        />
                       </div>
-                    );
-                  } else {
-                    return (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                        <div style={{ padding: '10px 14px', background: 'rgba(124, 58, 237, 0.1)', border: '1px solid rgba(124, 58, 237, 0.2)', borderRadius: '8px', color: 'var(--primary)', fontSize: '13px' }}>
-                          <strong>New student ID detected.</strong> Please enter your full name below and scan your face to register.
-                        </div>
-                        <div className="input-group">
-                          <label htmlFor="regName">Student Full Name</label>
-                          <input 
-                            type="text" 
-                            id="regName"
-                            placeholder="Enter full name"
-                            value={regName}
-                            onChange={(e) => setRegName(e.target.value)}
-                            className="app-input"
-                            style={{ paddingLeft: '12px' }}
-                            required
-                          />
-                        </div>
-                      </div>
-                    );
-                  }
-                })()}
-
-                {loginIdInput.trim() && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-                      Face ID Scanner
-                    </label>
-                    <WebcamCapture 
-                      mode={registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase()) ? "verify" : "register"}
-                      onFaceDetected={handleUnifiedFaceScan}
-                      isProcessing={isProcessingFaceLogin || isRegistering}
-                    />
-                    
-                    {(() => {
-                      const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
-                      if (isIdRegistered) {
-                        return (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-                            <button 
-                              onClick={() => handleStudentTextLogin(loginIdInput)}
-                              className="app-btn btn-cyan"
-                              style={{ width: '100%' }}
+                      {loginSearchResults.length > 0 && (
+                        <ul className="search-results">
+                          {loginSearchResults.map(user => (
+                            <li 
+                              key={user.studentId} 
+                              onClick={() => {
+                                setLoginIdInput(user.studentId);
+                                setLoginSearchResults([]);
+                              }}
+                              className="result-item"
                             >
-                              <LogIn size={14} /> Access Portal (Bypass Face ID)
-                            </button>
-                          </div>
-                        );
-                      } else {
-                        return (
-                          <button 
-                            onClick={handleRegisterSubmit}
-                            className="app-btn" 
-                            disabled={isRegistering || !regFaceDescriptor || !regName.trim()}
-                            style={{ width: '100%', marginTop: '12px' }}
-                          >
-                            {isRegistering ? 'Registering...' : regFaceDescriptor ? '✓ Register & Login' : 'Align Face to Register'}
-                          </button>
-                        );
-                      }
-                    })()}
+                              <span>{user.name}</span>
+                              <span className="result-item-id">{user.studentId}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="input-group">
+                      <label htmlFor="studentPassword">Password</label>
+                      <input 
+                        type="password" 
+                        id="studentPassword"
+                        placeholder="Enter password..."
+                        value={loginPasswordInput}
+                        onChange={(e) => setLoginPasswordInput(e.target.value)}
+                        className="app-input"
+                        style={{ paddingLeft: '12px' }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleStudentTextLogin(loginIdInput, loginPasswordInput);
+                        }}
+                      />
+                    </div>
+
+                    <button 
+                      onClick={() => handleStudentTextLogin(loginIdInput, loginPasswordInput)}
+                      className="app-btn btn-cyan"
+                      style={{ width: '100%' }}
+                      disabled={!loginIdInput.trim() || !loginPasswordInput.trim()}
+                    >
+                      <LogIn size={14} /> Login with ID & Password
+                    </button>
+
+                    <div style={{ textAlign: 'center', margin: '8px 0', fontSize: '11px', color: 'var(--text-muted)' }}>
+                      —— OR USE FACE ID ——
+                    </div>
+
+                    <WebcamCapture 
+                      mode="verify"
+                      onFaceDetected={handleUnifiedFaceScan}
+                      isProcessing={isProcessingFaceLogin}
+                    />
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '-6px' }}>
+                      Position your face to automatically verify and login (registered users only).
+                    </div>
                   </div>
+                ) : (
+                  /* --- SUB-TAB: STUDENT REGISTER (SIGN UP) --- */
+                  <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%' }}>
+                    <div className="input-group">
+                      <label htmlFor="regId">Roll No / Student ID</label>
+                      <input 
+                        type="text" 
+                        id="regId"
+                        placeholder="e.g. S-2026-104"
+                        value={regId}
+                        onChange={(e) => setRegId(e.target.value)}
+                        className="app-input"
+                        style={{ paddingLeft: '12px' }}
+                        required
+                      />
+                    </div>
+
+                    <div className="input-group">
+                      <label htmlFor="regName">Student Full Name</label>
+                      <input 
+                        type="text" 
+                        id="regName"
+                        placeholder="Enter full name"
+                        value={regName}
+                        onChange={(e) => setRegName(e.target.value)}
+                        className="app-input"
+                        style={{ paddingLeft: '12px' }}
+                        required
+                      />
+                    </div>
+
+                    <div className="input-group">
+                      <label htmlFor="regPassword">Create Password</label>
+                      <input 
+                        type="password" 
+                        id="regPassword"
+                        placeholder="Choose a password..."
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        className="app-input"
+                        style={{ paddingLeft: '12px' }}
+                        required
+                      />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                        Scan Face ID
+                      </label>
+                      <WebcamCapture 
+                        mode="register"
+                        onFaceDetected={handleUnifiedFaceScan}
+                        isProcessing={isRegistering}
+                      />
+                    </div>
+
+                    <button 
+                      type="submit" 
+                      className="app-btn" 
+                      disabled={isRegistering || !regFaceDescriptor || !regName.trim() || !regId.trim() || !regPassword.trim()}
+                      style={{ width: '100%', marginTop: '12px' }}
+                    >
+                      {isRegistering ? 'Registering...' : regFaceDescriptor ? '✓ Register & Login' : 'Align Face to Register'}
+                    </button>
+                  </form>
                 )}
               </div>
             ) : (
@@ -2244,126 +2335,196 @@ function App() {
               <div className="glass-panel" style={{ padding: '32px', maxWidth: '500px', margin: '0 auto', width: '100%' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', textAlign: 'left' }}>
                   <h3 style={{ fontSize: '18px', fontWeight: '700', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px', textAlign: 'center' }}>
-                    Student Portal (Login / Register)
+                    Student Portal
                   </h3>
-                  
-                  <div className="input-group">
-                    <label htmlFor="portalStudentId">Student Roll ID / ID</label>
-                    <div className="search-input-wrapper">
-                      <User size={15} className="search-icon" />
-                      <input 
-                        type="text" 
-                        id="portalStudentId"
-                        placeholder="Type Student ID or Search Name..."
-                        value={loginIdInput}
-                        onChange={(e) => {
-                          setLoginIdInput(e.target.value);
-                          setRegFaceDescriptor(null);
-                        }}
-                        className="app-input"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
-                            if (isIdRegistered) {
-                              handleStudentTextLogin(loginIdInput);
-                            }
-                          }
-                        }}
-                      />
-                    </div>
-                    {loginSearchResults.length > 0 && (
-                      <ul className="search-results">
-                        {loginSearchResults.map(user => (
-                          <li 
-                            key={user.studentId} 
-                            onClick={() => {
-                              setLoginIdInput(user.studentId);
-                              setLoginSearchResults([]);
-                              setRegFaceDescriptor(null);
-                            }}
-                            className="result-item"
-                          >
-                            <span>{user.name}</span>
-                            <span className="result-item-id">{user.studentId}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+
+                  {/* Sub-tabs: Login & Sign Up */}
+                  <div style={{ display: 'flex', gap: '8px', background: 'rgba(124, 58, 237, 0.05)', padding: '6px', borderRadius: '10px', border: '1px solid rgba(124, 58, 237, 0.1)' }}>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setStudentSubTab('login');
+                        setRegFaceDescriptor(null);
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        background: studentSubTab === 'login' ? 'var(--primary)' : 'transparent',
+                        color: studentSubTab === 'login' ? '#fff' : 'var(--text-secondary)',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      🔑 Sign In / Login
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setStudentSubTab('register');
+                        setRegFaceDescriptor(null);
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        background: studentSubTab === 'register' ? 'var(--primary)' : 'transparent',
+                        color: studentSubTab === 'register' ? '#fff' : 'var(--text-secondary)',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      📝 New User (Sign Up)
+                    </button>
                   </div>
 
-                  {loginIdInput.trim() && (() => {
-                    const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
-                    if (isIdRegistered) {
-                      const studentName = registeredUsers.find(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase())?.name;
-                      return (
-                        <div style={{ padding: '10px 14px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '8px', color: 'var(--accent-green)', fontSize: '13px' }}>
-                          <strong>Returning Student: {studentName}</strong>
-                          <div style={{ marginTop: '4px', fontSize: '11px', opacity: 0.9 }}>Align your face with the scanner to log in automatically.</div>
+                  {studentSubTab === 'login' ? (
+                    /* --- SUB-TAB: STUDENT LOGIN --- */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      <div className="input-group">
+                        <label htmlFor="portalStudentId">Student Roll No / ID</label>
+                        <div className="search-input-wrapper">
+                          <User size={15} className="search-icon" />
+                          <input 
+                            type="text" 
+                            id="portalStudentId"
+                            placeholder="Type Student ID or Search Name..."
+                            value={loginIdInput}
+                            onChange={(e) => setLoginIdInput(e.target.value)}
+                            className="app-input"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleStudentTextLogin(loginIdInput, loginPasswordInput);
+                            }}
+                          />
                         </div>
-                      );
-                    } else {
-                      return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                          <div style={{ padding: '10px 14px', background: 'rgba(124, 58, 237, 0.1)', border: '1px solid rgba(124, 58, 237, 0.2)', borderRadius: '8px', color: 'var(--primary)', fontSize: '13px' }}>
-                            <strong>New student ID detected.</strong> Please enter your full name below and scan your face to register.
-                          </div>
-                          <div className="input-group">
-                            <label htmlFor="portalRegName">Student Full Name</label>
-                            <input 
-                              type="text" 
-                              id="portalRegName"
-                              placeholder="Enter full name"
-                              value={regName}
-                              onChange={(e) => setRegName(e.target.value)}
-                              className="app-input"
-                              style={{ paddingLeft: '12px' }}
-                              required
-                            />
-                          </div>
-                        </div>
-                      );
-                    }
-                  })()}
-
-                  {loginIdInput.trim() && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-                        Face ID Scanner
-                      </label>
-                      <WebcamCapture 
-                        mode={registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase()) ? "verify" : "register"}
-                        onFaceDetected={handleUnifiedFaceScan}
-                        isProcessing={isProcessingFaceLogin || isRegistering}
-                      />
-                      
-                      {(() => {
-                        const isIdRegistered = registeredUsers.some(u => u.studentId.trim().toLowerCase() === loginIdInput.trim().toLowerCase());
-                        if (isIdRegistered) {
-                          return (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-                              <button 
-                                onClick={() => handleStudentTextLogin(loginIdInput)}
-                                className="app-btn btn-cyan"
-                                style={{ width: '100%' }}
+                        {loginSearchResults.length > 0 && (
+                          <ul className="search-results">
+                            {loginSearchResults.map(user => (
+                              <li 
+                                key={user.studentId} 
+                                onClick={() => {
+                                  setLoginIdInput(user.studentId);
+                                  setLoginSearchResults([]);
+                                }}
+                                className="result-item"
                               >
-                                <LogIn size={14} /> Access Portal (Bypass Face ID)
-                              </button>
-                            </div>
-                          );
-                        } else {
-                          return (
-                            <button 
-                              onClick={handleRegisterSubmit}
-                              className="app-btn" 
-                              disabled={isRegistering || !regFaceDescriptor || !regName.trim()}
-                              style={{ width: '100%', marginTop: '12px' }}
-                            >
-                              {isRegistering ? 'Registering...' : regFaceDescriptor ? '✓ Register & Login' : 'Align Face to Register'}
-                            </button>
-                          );
-                        }
-                      })()}
+                                <span>{user.name}</span>
+                                <span className="result-item-id">{user.studentId}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+
+                      <div className="input-group">
+                        <label htmlFor="portalStudentPassword">Password</label>
+                        <input 
+                          type="password" 
+                          id="portalStudentPassword"
+                          placeholder="Enter password..."
+                          value={loginPasswordInput}
+                          onChange={(e) => setLoginPasswordInput(e.target.value)}
+                          className="app-input"
+                          style={{ paddingLeft: '12px' }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleStudentTextLogin(loginIdInput, loginPasswordInput);
+                          }}
+                        />
+                      </div>
+
+                      <button 
+                        onClick={() => handleStudentTextLogin(loginIdInput, loginPasswordInput)}
+                        className="app-btn btn-cyan"
+                        style={{ width: '100%' }}
+                        disabled={!loginIdInput.trim() || !loginPasswordInput.trim()}
+                      >
+                        <LogIn size={14} /> Login with ID & Password
+                      </button>
+
+                      <div style={{ textAlign: 'center', margin: '8px 0', fontSize: '11px', color: 'var(--text-muted)' }}>
+                        —— OR USE FACE ID ——
+                      </div>
+
+                      <WebcamCapture 
+                        mode="verify"
+                        onFaceDetected={handleUnifiedFaceScan}
+                        isProcessing={isProcessingFaceLogin}
+                      />
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '-6px' }}>
+                        Position your face to automatically verify and login (registered users only).
+                      </div>
                     </div>
+                  ) : (
+                    /* --- SUB-TAB: STUDENT REGISTER (SIGN UP) --- */
+                    <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%' }}>
+                      <div className="input-group">
+                        <label htmlFor="portalRegId">Roll No / Student ID</label>
+                        <input 
+                          type="text" 
+                          id="portalRegId"
+                          placeholder="e.g. S-2026-104"
+                          value={regId}
+                          onChange={(e) => setRegId(e.target.value)}
+                          className="app-input"
+                          style={{ paddingLeft: '12px' }}
+                          required
+                        />
+                      </div>
+
+                      <div className="input-group">
+                        <label htmlFor="portalRegName">Student Full Name</label>
+                        <input 
+                          type="text" 
+                          id="portalRegName"
+                          placeholder="Enter full name"
+                          value={regName}
+                          onChange={(e) => setRegName(e.target.value)}
+                          className="app-input"
+                          style={{ paddingLeft: '12px' }}
+                          required
+                        />
+                      </div>
+
+                      <div className="input-group">
+                        <label htmlFor="portalRegPassword">Create Password</label>
+                        <input 
+                          type="password" 
+                          id="portalRegPassword"
+                          placeholder="Choose a password..."
+                          value={regPassword}
+                          onChange={(e) => setRegPassword(e.target.value)}
+                          className="app-input"
+                          style={{ paddingLeft: '12px' }}
+                          required
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                          Scan Face ID
+                        </label>
+                        <WebcamCapture 
+                          mode="register"
+                          onFaceDetected={handleUnifiedFaceScan}
+                          isProcessing={isRegistering}
+                        />
+                      </div>
+
+                      <button 
+                        type="submit" 
+                        className="app-btn" 
+                        disabled={isRegistering || !regFaceDescriptor || !regName.trim() || !regId.trim() || !regPassword.trim()}
+                        style={{ width: '100%', marginTop: '12px' }}
+                      >
+                        {isRegistering ? 'Registering...' : regFaceDescriptor ? '✓ Register & Login' : 'Align Face to Register'}
+                      </button>
+                    </form>
                   )}
                 </div>
               </div>
