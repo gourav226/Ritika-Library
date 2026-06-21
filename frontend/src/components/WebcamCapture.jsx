@@ -112,7 +112,14 @@ const WebcamCapture = ({
           audio: false
         };
 
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (firstErr) {
+          console.warn('FaceID: getUserMedia with constraints failed, trying basic constraints...', firstErr);
+          // Fallback to basic constraints if advanced constraints fail (e.g. overconstrained on older devices)
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
         streamRef.current = stream;
 
         // videoRef is now guaranteed to exist because the video tag is rendered unconditionally in the DOM!
@@ -247,6 +254,11 @@ const WebcamCapture = ({
         {!modelLoadingError && cameraError && (
           <div className="camera-placeholder">
             <p style={{ color: 'var(--accent-red)', padding: '0 20px', textAlign: 'center', fontWeight: 'bold' }}>{cameraError}</p>
+            {debugError && (
+              <p style={{ color: 'var(--text-muted)', fontSize: '11px', padding: '0 20px', textAlign: 'center', marginTop: '-10px', wordBreak: 'break-all' }}>
+                ({debugError})
+              </p>
+            )}
             <button className="app-btn btn-cyan" onClick={handleRetryCamera}>
               <RefreshCw size={14} /> Try Again
             </button>
