@@ -169,7 +169,7 @@ const WebcamCapture = ({
       try {
         // Detect single face with landmarks & descriptor
         const detection = await faceapi
-          .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
+          .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
           .withFaceLandmarks()
           .withFaceDescriptor();
 

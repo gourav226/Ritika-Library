@@ -1,5 +1,5 @@
 @echo off
-title Library & Face ID Attendance System
+title "Library & Face ID Attendance System"
 echo ==============================================================
 echo        Library ^& Face ID Attendance System
 echo ==============================================================

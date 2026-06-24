@@ -396,6 +396,7 @@ def get_user_profile(student_id):
 def login_user():
     data = request.json
     face_descriptor = data.get('faceDescriptor')
+    student_id = data.get('studentId') # Optional: specific user ID matching
     
     if not face_descriptor:
         return jsonify({"error": "Missing faceDescriptor"}), 400
@@ -410,14 +411,27 @@ def login_user():
     min_distance = 999.0
     threshold = 0.60
     
-    for user in users:
-        dist = euclidean_distance(face_descriptor, user['faceDescriptor'])
-        if dist < min_distance:
-            min_distance = dist
-            matched_user = user
-            
-    if min_distance > threshold or not matched_user:
-        return jsonify({"error": "Face not recognized. Access Denied."}), 401
+    if student_id:
+        # Verify face specifically against the provided student ID
+        for user in users:
+            if user['studentId'].lower() == student_id.lower():
+                matched_user = user
+                break
+        if not matched_user:
+            return jsonify({"error": "Student ID not found"}), 404
+        dist = euclidean_distance(face_descriptor, matched_user['faceDescriptor'])
+        if dist > threshold:
+            return jsonify({"error": "Face verification failed. Face does not match the registered record for this Student ID."}), 401
+    else:
+        # Search all users to find the closest match
+        for user in users:
+            dist = euclidean_distance(face_descriptor, user['faceDescriptor'])
+            if dist < min_distance:
+                min_distance = dist
+                matched_user = user
+                
+        if min_distance > threshold or not matched_user:
+            return jsonify({"error": "Face not recognized. Access Denied."}), 401
         
     return jsonify({
         "success": True,

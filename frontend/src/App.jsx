@@ -552,13 +552,29 @@ function App() {
       });
       const data = await res.json();
       if (res.ok) {
+        // Auto mark attendance upon login
+        try {
+          await fetch(`${API_BASE}/attendance/mark`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: data.studentId, faceDescriptor: descriptor })
+          });
+        } catch (e) {
+          console.warn("Auto attendance failed during login:", e);
+        }
+
         setLoggedInUser({ studentId: data.studentId, name: data.name });
         setUserRole('student');
         setIsLoggedIn(true);
         setCurrentView('home');
         addToast(`Access Granted. Welcome back, ${data.name}!`, 'success');
+        fetchLogs();
+        setIsProcessingFaceLogin(false);
       } else {
         addToast(data.error || 'Face not recognized. Access Denied.', 'error');
+        setTimeout(() => {
+          setIsProcessingFaceLogin(false);
+        }, 3000); // 3-second cooldown on error
       }
     } catch (err) {
       // Local fallback
@@ -576,22 +592,47 @@ function App() {
       }
 
       if (minDistance < threshold && matchedUser) {
+        // Auto mark attendance locally
+        const todayStr = new Date().toISOString().split('T')[0];
+        const nowTimeStr = new Date().toTimeString().split(' ')[0];
+        let localAttendance = JSON.parse(localStorage.getItem('ritika_library_attendance') || JSON.stringify(DEFAULT_ATTENDANCE));
+        const alreadyMarked = localAttendance.some(
+          log => log.studentId === matchedUser.studentId && log.date === todayStr
+        );
+        if (!alreadyMarked) {
+          const newLog = {
+            studentId: matchedUser.studentId,
+            name: matchedUser.name,
+            date: todayStr,
+            time: nowTimeStr,
+            method: 'Face Verify'
+          };
+          localStorage.setItem('ritika_library_attendance', JSON.stringify([...localAttendance, newLog]));
+          fetchLogs();
+        }
+
         setLoggedInUser({ studentId: matchedUser.studentId, name: matchedUser.name });
         setUserRole('student');
         setIsLoggedIn(true);
         setCurrentView('home');
         addToast(`Access Granted. Welcome back, ${matchedUser.name}! (Offline Mode)`, 'success');
+        setIsProcessingFaceLogin(false);
       } else {
         addToast('Face not recognized. Please register first or adjust lighting.', 'error');
+        setTimeout(() => {
+          setIsProcessingFaceLogin(false);
+        }, 3000); // 3-second cooldown on error
       }
-    } finally {
-      setIsProcessingFaceLogin(false);
     }
   };
 
   const handleUnifiedFaceScan = async (descriptor) => {
     const rollId = loginIdInput.trim();
-    if (!rollId) return;
+    if (!rollId) {
+      // Fallback to purely face-based login if Roll ID is empty
+      await handleStudentFaceLogin(descriptor);
+      return;
+    }
 
     const isRegistered = registeredUsers.some(u => u.studentId.toLowerCase() === rollId.toLowerCase());
 
@@ -604,35 +645,35 @@ function App() {
         const res = await fetch(`${API_BASE}/users/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ faceDescriptor: descriptor })
+          body: JSON.stringify({ studentId: rollId, faceDescriptor: descriptor }) // Pass studentId for specific matching
         });
         const data = await res.json();
         if (res.ok) {
-          if (data.studentId.toLowerCase() === rollId.toLowerCase()) {
-            // Auto mark attendance
-            try {
-              await fetch(`${API_BASE}/attendance/mark`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ studentId: data.studentId, faceDescriptor: descriptor })
-              });
-            } catch (e) {
-              console.warn("Auto attendance failed during login:", e);
-            }
-            
-            setLoggedInUser({ studentId: data.studentId, name: data.name });
-            setUserRole('student');
-            setIsLoggedIn(true);
-            setCurrentView('home');
-            addToast(`Access Granted. Welcome back, ${data.name}!`, 'success');
-            fetchLogs();
-            setLoginIdInput('');
-            setLoginSearchResults([]);
-          } else {
-            addToast(`Face does not match Student ID: ${rollId}`, 'error');
+          // Auto mark attendance
+          try {
+            await fetch(`${API_BASE}/attendance/mark`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ studentId: data.studentId, faceDescriptor: descriptor })
+            });
+          } catch (e) {
+            console.warn("Auto attendance failed during login:", e);
           }
+          
+          setLoggedInUser({ studentId: data.studentId, name: data.name });
+          setUserRole('student');
+          setIsLoggedIn(true);
+          setCurrentView('home');
+          addToast(`Access Granted. Welcome back, ${data.name}!`, 'success');
+          fetchLogs();
+          setLoginIdInput('');
+          setLoginSearchResults([]);
+          setIsProcessingFaceLogin(false);
         } else {
           addToast(data.error || 'Face not recognized. Access Denied.', 'error');
+          setTimeout(() => {
+            setIsProcessingFaceLogin(false);
+          }, 3000); // 3-second cooldown on error
         }
       } catch (err) {
         // Local fallback
@@ -667,18 +708,28 @@ function App() {
             addToast(`Access Granted. Welcome back, ${targetUser.name}! (Offline Mode)`, 'success');
             setLoginIdInput('');
             setLoginSearchResults([]);
+            setIsProcessingFaceLogin(false);
           } else {
             addToast('Face verification failed. Face does not match the record.', 'error');
+            setTimeout(() => {
+              setIsProcessingFaceLogin(false);
+            }, 3000); // 3-second cooldown on error
           }
         } else {
           addToast('Student not found in local database.', 'error');
+          setTimeout(() => {
+            setIsProcessingFaceLogin(false);
+          }, 3000); // 3-second cooldown on error
         }
-      } finally {
-        setIsProcessingFaceLogin(false);
       }
     } else {
-      // New student: store the face descriptor to state so they can click submit
-      setRegFaceDescriptor(descriptor);
+      // Inputted ID is not registered, let's inform the user
+      if (isProcessingFaceLogin) return;
+      setIsProcessingFaceLogin(true);
+      addToast(`Student ID "${rollId}" is not registered yet. Please register first or clear the input to login purely with Face ID.`, 'error');
+      setTimeout(() => {
+        setIsProcessingFaceLogin(false);
+      }, 3000); // 3-second cooldown on error
     }
   };
 
@@ -1488,7 +1539,7 @@ function App() {
                       </label>
                       <WebcamCapture 
                         mode="register"
-                        onFaceDetected={handleUnifiedFaceScan}
+                        onFaceDetected={handleRegisterFace}
                         isProcessing={isRegistering}
                       />
                     </div>
@@ -2511,7 +2562,7 @@ function App() {
                         </label>
                         <WebcamCapture 
                           mode="register"
-                          onFaceDetected={handleUnifiedFaceScan}
+                          onFaceDetected={handleRegisterFace}
                           isProcessing={isRegistering}
                         />
                       </div>
